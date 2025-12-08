@@ -24,7 +24,7 @@ The code is intentionally lightweight so you can extend it with real sensors, a 
    pip install -r requirements.txt
    ```
 2. Export MQTT/TLS settings (see `.env.example`). If you want to demo without a broker, you can still run the API and post simulated vitals.
-3. Launch the API:
+3. Launch the API (this also starts the UDP discovery responder that ESP32 nodes use to find the backend on your LAN):
    ```bash
    uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
    ```
@@ -32,8 +32,26 @@ The code is intentionally lightweight so you can extend it with real sensors, a 
    - `GET /health` – readiness check.
    - `POST /simulate/vitals` – send a `VitalsMessage` JSON to test rule evaluation without MQTT.
    - `GET /vitals` and `GET /alerts` – list the latest readings and alert history.
+   - `POST /device/<device_id>/vitals` and `POST /device/<device_id>/telemetry` – ESP32-facing endpoints used by the firmware to post vitals/telemetry when MQTT is not available.
 
 When connected to a broker, the backend subscribes to `patients/+/vitals` and publishes commands such as `ALARM_ON` to `patients/<device_id>/cmd` when thresholds are exceeded.
+
+### Local Wi-Fi demo with the ESP32 firmware
+
+Use these steps to run the backend and have the ESP32 automatically discover it over the same Wi‑Fi network:
+
+1. Start the backend (as above) and ensure UDP port 4211 is reachable on your machine. The discovery responder replies to `PMS_DISCOVER` broadcasts on that port and advertises `http://<backend-ip>:8000` by default. Override via `DISCOVERY_PORT`, `DISCOVERY_REQUEST`, `DISCOVERY_RESPONSE`, `DISCOVERY_SCHEME`, or `DISCOVERY_API_PORT` environment variables if needed.
+2. Open `firmware/esp32_patient_node/esp32_patient_node.ino` in the Arduino IDE or `arduino-cli` and update the top of the file with your Wi‑Fi SSID/password, `DEVICE_ID`, and optional patient hash. Leave the discovery constants unless you changed them on the backend.
+3. Select the ESP32 board in the IDE, connect the device over USB, and upload the sketch. On boot the ESP32 will:
+   - Join your Wi‑Fi network.
+   - Broadcast a UDP discovery request; the backend responds with its base URL.
+   - POST vitals and telemetry every ~2 seconds to `/device/<DEVICE_ID>/vitals` and `/device/<DEVICE_ID>/telemetry`.
+4. Watch the serial monitor for logs (discovery success, vitals payloads, backend responses). You can also call the backend directly with curl:
+   ```bash
+   curl http://<backend-ip>:8000/vitals
+   curl http://<backend-ip>:8000/telemetry
+   curl http://<backend-ip>:8000/alerts
+   ```
 
 ## ESP32 firmware notes
 

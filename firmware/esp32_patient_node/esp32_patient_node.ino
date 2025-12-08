@@ -7,10 +7,33 @@
 
 #include <Arduino.h>
 #include <Wire.h>
+#include <WiFi.h>
+#include <WiFiUdp.h>
+#include <HTTPClient.h>
+#include <time.h>
+#include <string.h>
 #include "MAX30105.h"
 #include "heartRate.h"
 
 MAX30105 particleSensor;
+long lastIrSample = 0;
+long lastRedSample = 0;
+
+// Wi-Fi credentials and backend discovery
+const char *WIFI_SSID = "YOUR_WIFI_SSID";
+const char *WIFI_PASSWORD = "YOUR_WIFI_PASSWORD";
+const char *DEVICE_ID = "esp32_patient_01";
+const char *PATIENT_HASH = "demo-patient";
+const unsigned int DISCOVERY_PORT = 4211;
+const char *DISCOVERY_REQUEST = "PMS_DISCOVER";
+const char *DISCOVERY_RESPONSE = "PMS_BACKEND";
+
+WiFiUDP udp;
+String backendBaseUrl = "";
+unsigned long lastDiscoveryAttempt = 0;
+const unsigned long discoveryIntervalMs = 15000;
+unsigned long lastSendMs = 0;
+const unsigned long sendIntervalMs = 2000;
 
 const int D1 = 5;
 const int D2 = 4;
@@ -32,6 +55,12 @@ bool fingerDetected = false;
 // ---------------- PROTOTYPES ----------------
 boolean checkForBeat(long irValue);
 float calculateSpO2Simple(long redValue, long irValue);
+void connectWiFi();
+bool discoverBackend();
+String isoTimestamp();
+bool postJson(const String &url, const String &payload);
+void sendVitalsToBackend(float temperatureC);
+void sendTelemetry(const String &jsonPayload);
 
 // ---------------- SETUP ----------------
 void setup() {
@@ -39,6 +68,10 @@ void setup() {
   delay(300);
   Serial.println();
   Serial.println("Booting Freenove ESP8266 + MAX30105 (serial-only) ...");
+
+  connectWiFi();
+  configTime(0, 0, "pool.ntp.org", "time.nist.gov");
+  discoverBackend();
 
   pinMode(RED_LED_PIN, OUTPUT);
   pinMode(GREEN_LED_PIN, OUTPUT);
@@ -73,6 +106,9 @@ void setup() {
 void loop() {
   long irValue = particleSensor.getIR();
   long redValue = particleSensor.getRed();
+  float temperatureC = particleSensor.readTemperature();
+  lastIrSample = irValue;
+  lastRedSample = redValue;
 
   // finger detection
   fingerDetected = (irValue > MIN_IR_VALUE);
@@ -101,8 +137,6 @@ void loop() {
 
     // SpO2
     spO2 = calculateSpO2Simple(redValue, irValue);
-    float temperatureC = particleSensor.readTemperature();
-
     // simple inhale/exhale detection (based on IR moving average)
     irMovingAverage = (irMovingAverage * (smoothingFactor - 1) + irValue) / smoothingFactor;
 
@@ -145,6 +179,7 @@ void loop() {
   }
 
   Serial.println("-------------------------------");
+  sendVitalsToBackend(temperatureC);
   delay(700); // adjust loop pace as needed
 }
 
@@ -167,4 +202,156 @@ float calculateSpO2Simple(long redValue, long irValue) {
   float ratio = (float)redValue / (float)irValue;
   float spO2 = 110.0 - (25.0 * ratio);
   return constrain(spO2, 0.0, 100.0);
+}
+
+// ---------------- NETWORK HELPERS ----------------
+void connectWiFi() {
+  if (WiFi.status() == WL_CONNECTED) return;
+
+  Serial.print("Connecting to WiFi: ");
+  Serial.println(WIFI_SSID);
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+
+  int retries = 0;
+  while (WiFi.status() != WL_CONNECTED && retries < 40) {
+    delay(250);
+    Serial.print(".");
+    retries++;
+  }
+  Serial.println();
+
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.print("WiFi connected. IP address: ");
+    Serial.println(WiFi.localIP());
+  } else {
+    Serial.println("Failed to connect to WiFi. Check credentials.");
+  }
+}
+
+bool discoverBackend() {
+  unsigned long now = millis();
+  if ((backendBaseUrl.length() > 0) && (now - lastDiscoveryAttempt < discoveryIntervalMs)) {
+    return true;
+  }
+
+  lastDiscoveryAttempt = now;
+  if (!udp.begin(DISCOVERY_PORT)) {
+    Serial.println("UDP setup for discovery failed.");
+    return false;
+  }
+
+  Serial.println("Broadcasting for backend...");
+  for (int attempt = 0; attempt < 3; attempt++) {
+    udp.beginPacket(IPAddress(255, 255, 255, 255), DISCOVERY_PORT);
+    udp.write(DISCOVERY_REQUEST);
+    udp.endPacket();
+
+    unsigned long startWait = millis();
+    while (millis() - startWait < 1200) {
+      int packetSize = udp.parsePacket();
+      if (packetSize) {
+        String response = udp.readString();
+        response.trim();
+        Serial.print("Discovery response: ");
+        Serial.println(response);
+
+        if (response.startsWith(DISCOVERY_RESPONSE)) {
+          backendBaseUrl = response.substring(strlen(DISCOVERY_RESPONSE));
+          backendBaseUrl.trim();
+          Serial.print("Backend discovered at: ");
+          Serial.println(backendBaseUrl);
+          return true;
+        }
+      }
+      delay(50);
+    }
+  }
+
+  Serial.println("Backend discovery failed. Will retry.");
+  backendBaseUrl = "";
+  return false;
+}
+
+String isoTimestamp() {
+  struct tm timeinfo;
+  if (!getLocalTime(&timeinfo, 1000)) {
+    return "1970-01-01T00:00:00Z";
+  }
+  char buffer[30];
+  strftime(buffer, sizeof(buffer), "%Y-%m-%dT%H:%M:%SZ", &timeinfo);
+  return String(buffer);
+}
+
+bool postJson(const String &url, const String &payload) {
+  if (WiFi.status() != WL_CONNECTED) {
+    connectWiFi();
+    if (WiFi.status() != WL_CONNECTED) return false;
+  }
+
+  HTTPClient http;
+  WiFiClient client;
+
+  Serial.print("POST ");
+  Serial.println(url);
+  http.begin(client, url);
+  http.addHeader("Content-Type", "application/json");
+  int httpCode = http.POST(payload);
+
+  if (httpCode > 0) {
+    Serial.print("Response code: ");
+    Serial.println(httpCode);
+  } else {
+    Serial.print("HTTP POST failed: ");
+    Serial.println(http.errorToString(httpCode));
+  }
+
+  http.end();
+  return httpCode > 0 && httpCode < 300;
+}
+
+void sendTelemetry(const String &jsonPayload) {
+  if (backendBaseUrl.length() == 0) return;
+  String url = backendBaseUrl + "/device/" + DEVICE_ID + "/telemetry";
+  postJson(url, jsonPayload);
+}
+
+void sendVitalsToBackend(float temperatureC) {
+  unsigned long now = millis();
+  if (now - lastSendMs < sendIntervalMs) return;
+  lastSendMs = now;
+
+  if (WiFi.status() != WL_CONNECTED) {
+    connectWiFi();
+  }
+
+  if (!discoverBackend()) return;
+
+  String url = backendBaseUrl + "/device/" + DEVICE_ID + "/vitals";
+  String payload = "{\"device_id\":\"" + String(DEVICE_ID) + "\",";
+  payload += "\"patient_hash\":\"" + String(PATIENT_HASH) + "\",";
+  payload += "\"timestamp\":\"" + isoTimestamp() + "\",";
+  payload += "\"vitals\":{";
+  payload += "\"heart_rate\":" + String(beatsPerMinute, 1) + ",";
+  payload += "\"spo2\":" + String(spO2, 1) + ",";
+  payload += "\"temperature\":" + String(temperatureC, 1) + ",";
+  payload += "\"fall_detected\":false";
+  payload += "}}";
+
+  bool ok = postJson(url, payload);
+
+  // also emit flexible telemetry (respiration, raw IR) for debugging or expansion
+  String breathState = "steady";
+  if (isInhaling) breathState = "inhale";
+  else if (isExhaling) breathState = "exhale";
+
+  String telemetry = "{\"respiration\":\"" + breathState + "\",";
+  telemetry += "\"fingerDetected\":" + String(fingerDetected ? "true" : "false") + ",";
+  telemetry += "\"irMovingAverage\":" + String(irMovingAverage) + ",";
+  telemetry += "\"ir\":" + String(lastIrSample) + ",";
+  telemetry += "\"red\":" + String(lastRedSample) + "}";
+
+  if (ok) {
+    sendTelemetry(telemetry);
+  }
 }

@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Optional
+from typing import Any, Optional
 
 from pydantic import BaseModel, Field
 
@@ -32,3 +32,11 @@ class Command(BaseModel):
     cmd: str = Field(..., description="Actuator command name")
     reason: Optional[str] = Field(None, description="Why the command was issued")
     timestamp: datetime = Field(default_factory=lambda: datetime.utcnow())
+
+
+class TelemetryMessage(BaseModel):
+    device_id: str = Field(..., description="Unique patient node identifier")
+    timestamp: datetime = Field(default_factory=lambda: datetime.utcnow())
+    data: dict[str, Any] = Field(
+        default_factory=dict, description="Arbitrary JSON payload sent by the device"
+    )

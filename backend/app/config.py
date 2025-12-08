@@ -24,6 +24,17 @@ class MQTTConfig:
 
 
 @dataclass
+class DiscoveryConfig:
+    """Settings used for UDP-based backend discovery on the local network."""
+
+    listen_port: int = int(os.environ.get("DISCOVERY_PORT", 4211))
+    request_magic: str = os.environ.get("DISCOVERY_REQUEST", "PMS_DISCOVER")
+    response_magic: str = os.environ.get("DISCOVERY_RESPONSE", "PMS_BACKEND")
+    advertised_port: int = int(os.environ.get("DISCOVERY_API_PORT", 8000))
+    advertised_scheme: str = os.environ.get("DISCOVERY_SCHEME", "http")
+
+
+@dataclass
 class Thresholds:
     max_heart_rate: float = float(os.environ.get("THRESHOLD_MAX_HR", 120))
     min_spo2: float = float(os.environ.get("THRESHOLD_MIN_SPO2", 92))
@@ -31,4 +42,6 @@ class Thresholds:
 
 
 mqtt_config = MQTTConfig()
+discovery_config = DiscoveryConfig()
 thresholds = Thresholds()
+

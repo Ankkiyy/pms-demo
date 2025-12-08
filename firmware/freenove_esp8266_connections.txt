@@ -1,0 +1,39 @@
+Freenove ESP8266 (ESP-12F) Hardware Connections
+=============================================
+
+Power and Ground
+----------------
+- MAX3010x sensor VIN/VCC  → 3V3 (3.3 V supply)
+- MAX3010x sensor GND      → GND
+- External LEDs/Buzzer GND → GND (shared reference)
+
+I²C Heart-Rate / SpO₂ Sensor (MAX30102 / MAX30105 breakout)
+----------------------------------------------------------
+- SCL → D1 (GPIO5)
+- SDA → D2 (GPIO4)
+- INT → D5 (GPIO14)  [optional; only needed if you enable interrupt-driven reads]
+- Connect VIN/VCC and GND as listed above.
+
+Status LEDs (discrete 5 mm LEDs with series resistors)
+-----------------------------------------------------
+- Red LED anode  → D6 (GPIO12) through a 220 Ω resistor
+- Red LED cathode → GND
+- Green LED anode → D7 (GPIO13) through a 220 Ω resistor
+- Green LED cathode → GND
+
+Optional Piezo Buzzer (active, 3.3 V compliant)
+----------------------------------------------
+- Positive lead → D8 (GPIO15)
+- Negative lead → GND
+- Add a small NPN transistor + diode if you use a larger passive buzzer that draws >20 mA.
+
+USB / Serial
+-----------
+- Use the on-board micro-USB for 5 V input and serial programming (no extra wiring required).
+
+Notes
+-----
+- Keep all peripherals on the 3.3 V rail; the ESP8266 pins are *not* 5 V tolerant.
+- Route I²C wires as short as practical; add 4.7 kΩ pull-up resistors to 3.3 V if your breakout does not include them.
+- Share ground between every module so the vitals sensor, LEDs, buzzer, and ESP8266 have a common reference.
+- If Wi-Fi noise affects the MAX3010x readings, twist SDA/SCL with a ground wire or add small (100 Ω) series resistors.

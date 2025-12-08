@@ -1,8 +1,12 @@
 """FastAPI application for the central monitoring unit."""
 from __future__ import annotations
 
+import logging
+import socket
+
 from fastapi import FastAPI, HTTPException
 
+from .config import discovery_config
 from .mqtt_client import bridge
 from .discovery import discovery_responder
 from .rules import evaluate_alert
@@ -11,12 +15,32 @@ from .store import data_store
 
 app = FastAPI(title="Patient Monitoring System", version="0.1.0")
 
+logger = logging.getLogger(__name__)
+
 
 @app.on_event("startup")
 async def startup_event() -> None:
     bridge.start()
     discovery_responder.start()
+    host_ip = _local_ip()
+    logger.info(
+        "Backend reachable on http://%s:%s (docs at http://%s:%s/docs)",
+        host_ip,
+        discovery_config.advertised_port,
+        host_ip,
+        discovery_config.advertised_port,
+    )
 
+
+def _local_ip() -> str:
+    """Best-effort lookup of the primary LAN IPv4 address."""
+
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+            sock.connect(("8.8.8.8", 80))
+            return sock.getsockname()[0]
+    except OSError:
+        return "127.0.0.1"
 
 @app.on_event("shutdown")
 async def shutdown_event() -> None:

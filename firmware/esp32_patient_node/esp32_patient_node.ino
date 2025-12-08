@@ -7,9 +7,9 @@
 
 #include <Arduino.h>
 #include <Wire.h>
-#include <WiFi.h>
+#include <ESP8266WiFi.h>
 #include <WiFiUdp.h>
-#include <HTTPClient.h>
+#include <ESP8266HTTPClient.h>
 #include <time.h>
 #include <string.h>
 #include "MAX30105.h"
@@ -20,8 +20,8 @@ long lastIrSample = 0;
 long lastRedSample = 0;
 
 // Wi-Fi credentials and backend discovery
-const char *WIFI_SSID = "YOUR_WIFI_SSID";
-const char *WIFI_PASSWORD = "YOUR_WIFI_PASSWORD";
+const char *WIFI_SSID = "JarvisX";
+const char *WIFI_PASSWORD = "121212qw";
 const char *DEVICE_ID = "esp32_patient_01";
 const char *PATIENT_HASH = "demo-patient";
 const unsigned int DISCOVERY_PORT = 4211;

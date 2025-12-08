@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import threading
 import time
 from datetime import datetime
@@ -17,31 +18,52 @@ from .store import data_store
 
 class MQTTBridge:
     def __init__(self) -> None:
+        self._log = logging.getLogger(__name__)
         self._client = mqtt.Client(client_id=mqtt_config.client_id)
         if mqtt_config.username and mqtt_config.password:
             self._client.username_pw_set(mqtt_config.username, mqtt_config.password)
         if mqtt_config.ca_cert_path:
             self._client.tls_set(ca_certs=mqtt_config.ca_cert_path)
         self._client.on_connect = self._on_connect
+        self._client.on_disconnect = self._on_disconnect
         self._client.on_message = self._on_message
         self._thread: Optional[threading.Thread] = None
         self._stop_event = threading.Event()
+        self._connected = False
 
     def start(self) -> None:
         """Start the MQTT network loop in a background thread."""
-        self._client.connect(mqtt_config.host, mqtt_config.port, keepalive=60)
+        self._stop_event.clear()
+        try:
+            self._client.connect(mqtt_config.host, mqtt_config.port, keepalive=60)
+        except OSError as exc:  # Broker might be offline during local testing
+            self._log.warning(
+                "MQTT broker %s:%s unreachable (%s). Running without MQTT integration.",
+                mqtt_config.host,
+                mqtt_config.port,
+                exc,
+            )
+            return
+        self._connected = True
         self._thread = threading.Thread(target=self._loop_forever, daemon=True)
         self._thread.start()
 
     def stop(self) -> None:
         self._stop_event.set()
-        self._client.disconnect()
+        if self._connected:
+            self._client.disconnect()
         if self._thread:
             self._thread.join(timeout=5)
+            self._thread = None
+        self._connected = False
 
     # MQTT callbacks
     def _on_connect(self, client: mqtt.Client, userdata, flags, rc):
+        self._connected = True
         client.subscribe(mqtt_config.sub_vitals_topic)
+
+    def _on_disconnect(self, client: mqtt.Client, userdata, rc):
+        self._connected = False
 
     def _on_message(self, client: mqtt.Client, userdata, msg):
         payload = msg.payload.decode()

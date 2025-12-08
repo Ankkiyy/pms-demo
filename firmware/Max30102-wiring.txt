@@ -1,0 +1,13 @@
+MAX30102  →  Freenove ESP8266
+--------------------------------
+VIN / VCC → 3V3
+GND       → GND
+SCL       → D1   (GPIO5)
+SDA       → D2   (GPIO4)
+INT       → D5   (optional)
+
+Red LED +  → D6  (GPIO12)  (through 220 Ω resistor)
+Red LED –  → GND
+
+Green LED + → D7 (GPIO13)  (through 220 Ω resistor)
+Green LED – → GND

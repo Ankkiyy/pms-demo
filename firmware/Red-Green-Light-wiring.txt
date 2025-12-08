@@ -1,0 +1,16 @@
+Red Led → ESP8266
+
+Positive  → D6 (GPIO12)
+GND       → GND
+
+
+Green Led → ESP8266
+
+Positive  → D7 (GPIO13)
+GND       → GND
+
+
+State           Green LED       Red LED
+Boot / Normal	    ON	            OFF
+Alert Triggered	    OFF             ON
+Alert Cleared	    ON              OFF

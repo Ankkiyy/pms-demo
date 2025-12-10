@@ -5,7 +5,9 @@ import asyncio
 import threading
 from collections import deque
 from datetime import datetime
-from typing import AbstractEventLoop, Deque, Dict, List, Tuple
+from typing import Deque, Dict, List, Tuple
+
+from asyncio import AbstractEventLoop
 
 from .schemas import Alert, TelemetryMessage, VitalsMessage
 

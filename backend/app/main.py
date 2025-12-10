@@ -12,6 +12,7 @@ from typing import Iterable
 import httpx
 
 from fastapi import Body, FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
 from .config import discovery_config, thresholds
@@ -23,30 +24,44 @@ from .store import data_store
 
 app = FastAPI(title="Patient Monitoring System", version="0.1.0")
 
+_cors_origins = os.getenv(
+    "CORS_ALLOW_ORIGINS",
+    "http://localhost:8080,http://127.0.0.1:8080",
+)
+_allowed_origins = [origin.strip() for origin in _cors_origins.split(",") if origin.strip()]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_allowed_origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 logger = logging.getLogger(__name__)
 
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3")
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "deepseek-r1:1.5b")
 OLLAMA_ENDPOINT = os.getenv("OLLAMA_ENDPOINT", "http://localhost:11434/api/chat")
 ENABLE_DEMO_PATIENTS = os.getenv("ENABLE_DEMO_PATIENTS", "true").lower() == "true"
 
 _demo_task: asyncio.Task | None = None
 _DEMO_PATIENTS = [
     {
-        "device_id": "demo-01",
+        "device_id": "esp-01",
         "patient_hash": "alice-vasquez",
         "heart_rate": 76.0,
         "spo2": 98.0,
         "temperature": 36.6,
     },
     {
-        "device_id": "demo-02",
+        "device_id": "esp-02",
         "patient_hash": "brandon-cho",
         "heart_rate": 88.0,
         "spo2": 94.0,
         "temperature": 37.1,
     },
     {
-        "device_id": "demo-03",
+        "device_id": "esp-03",
         "patient_hash": "carol-mensah",
         "heart_rate": 64.0,
         "spo2": 97.0,

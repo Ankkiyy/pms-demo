@@ -11,6 +11,17 @@ class Vitals(BaseModel):
     heart_rate: float = Field(..., description="Beats per minute")
     spo2: float = Field(..., description="Blood oxygen saturation percentage")
     temperature: float = Field(..., description="Body temperature in Celsius")
+    ambient_temperature: float = Field(
+        ..., description="Ambient temperature around the patient in Celsius"
+    )
+    humidity: float = Field(..., description="Relative humidity percentage")
+    activity_level: float = Field(
+        ..., description="Accelerometer activity score between 0 (still) and 1 (active)"
+    )
+    activity_state: str = Field(
+        ..., description="Discrete activity label (sleeping, sitting, walking, exercising)"
+    )
+    steps_walked: int = Field(..., description="Cumulative steps walked today")
     fall_detected: bool = Field(..., description="True if fall detection triggered")
 
 

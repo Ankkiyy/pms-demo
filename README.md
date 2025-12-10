@@ -36,6 +36,16 @@ The code is intentionally lightweight so you can extend it with real sensors, a 
 
 When connected to a broker, the backend subscribes to `patients/+/vitals` and publishes commands such as `ALARM_ON` to `patients/<device_id>/cmd` when thresholds are exceeded.
 
+## Dashboard access
+
+- Start the backend (see above). Demo vitals for three sample patients (Alice Vasquez, Brandon Cho, Carol Mensah) are streamed automatically; set `ENABLE_DEMO_PATIENTS=false` to disable this feed.
+- Serve the static dashboard:
+  ```bash
+  cd frontend
+  python -m http.server 8080
+  ```
+- Open http://localhost:8080 in a browser. The left pane lists patients with mini trend charts; selecting one shows detailed charts on the right. The AI panel lets you ask quick-rule or Ollama-backed questions about any patient.
+
 ### Local Wi-Fi demo with the ESP32 firmware
 
 Use these steps to run the backend and have the ESP32 automatically discover it over the same Wi‑Fi network:

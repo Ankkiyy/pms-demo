@@ -1,0 +1,607 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Patient Monitoring Station</title>
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap"
+    />
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+      :root {
+        --bg: #0f172a;
+        --card: #111827;
+        --muted: #6b7280;
+        --accent: #22d3ee;
+        --danger: #f87171;
+        --success: #4ade80;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      input[type='checkbox'] {
+        accent-color: var(--accent);
+      }
+
+      body {
+        margin: 0;
+        font-family: 'Inter', system-ui, -apple-system, sans-serif;
+        background: radial-gradient(circle at 20% 20%, #0b1224, #0a0f1c 40%),
+          radial-gradient(circle at 80% 0%, #112042, #0a0f1c 30%),
+          var(--bg);
+        color: #e5e7eb;
+        min-height: 100vh;
+      }
+
+      header {
+        padding: 20px 24px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        position: sticky;
+        top: 0;
+        backdrop-filter: blur(8px);
+        background: rgba(15, 23, 42, 0.8);
+        border-bottom: 1px solid #1f2937;
+        z-index: 10;
+      }
+
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        font-weight: 700;
+        letter-spacing: 0.5px;
+      }
+
+      .pulse {
+        width: 14px;
+        height: 14px;
+        border-radius: 999px;
+        background: var(--accent);
+        box-shadow: 0 0 0 0 rgba(34, 211, 238, 0.7);
+        animation: pulse 2.5s infinite;
+      }
+
+      @keyframes pulse {
+        0% {
+          box-shadow: 0 0 0 0 rgba(34, 211, 238, 0.6);
+        }
+        70% {
+          box-shadow: 0 0 0 12px rgba(34, 211, 238, 0);
+        }
+        100% {
+          box-shadow: 0 0 0 0 rgba(34, 211, 238, 0);
+        }
+      }
+
+      main {
+        display: grid;
+        grid-template-columns: 380px 1fr;
+        gap: 16px;
+        padding: 0 16px 32px;
+      }
+
+      .panel {
+        background: linear-gradient(145deg, #0f172a, #0b1224);
+        border: 1px solid #1f2937;
+        border-radius: 14px;
+        padding: 16px;
+        box-shadow: 0 10px 50px rgba(0, 0, 0, 0.3);
+      }
+
+      .sidebar {
+        position: sticky;
+        top: 96px;
+        height: calc(100vh - 120px);
+        overflow-y: auto;
+      }
+
+      .sidebar h2 {
+        margin: 0 0 12px;
+        font-size: 16px;
+        color: #cbd5e1;
+      }
+
+      .patient-card {
+        background: #0a1020;
+        border: 1px solid #1f2937;
+        border-radius: 12px;
+        padding: 12px;
+        margin-bottom: 12px;
+        cursor: pointer;
+        transition: border-color 0.2s, transform 0.2s;
+      }
+
+      .patient-card:hover,
+      .patient-card.active {
+        border-color: var(--accent);
+        transform: translateY(-1px);
+      }
+
+      .patient-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 8px;
+      }
+
+      .patient-id {
+        font-weight: 700;
+        color: #e2e8f0;
+      }
+
+      .status-pill {
+        padding: 4px 10px;
+        border-radius: 999px;
+        font-size: 12px;
+        font-weight: 600;
+        color: #0b1020;
+      }
+
+      .status-ok {
+        background: rgba(74, 222, 128, 0.9);
+      }
+
+      .status-alert {
+        background: rgba(248, 113, 113, 0.95);
+      }
+
+      .vital-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 8px;
+        margin-bottom: 8px;
+        font-size: 12px;
+        color: #cbd5e1;
+      }
+
+      .mini-chart {
+        height: 64px;
+      }
+
+      .detail-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        gap: 12px;
+        margin-bottom: 16px;
+      }
+
+      .detail-meta h2 {
+        margin: 0 0 8px;
+      }
+
+      .meta-row {
+        display: flex;
+        gap: 12px;
+        color: #cbd5e1;
+        font-size: 14px;
+      }
+
+      .chip {
+        padding: 6px 12px;
+        border-radius: 10px;
+        background: #0a1020;
+        border: 1px solid #1f2937;
+      }
+
+      .chart-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+        gap: 14px;
+      }
+
+      .chart-card {
+        background: #0a1020;
+        border: 1px solid #1f2937;
+        border-radius: 12px;
+        padding: 12px;
+      }
+
+      .chart-card h3 {
+        margin: 0 0 8px;
+        font-size: 14px;
+        color: #cbd5e1;
+      }
+
+      .assistant {
+        margin-top: 16px;
+        background: linear-gradient(135deg, rgba(34, 211, 238, 0.1), #0a1020);
+        border: 1px solid #1f2937;
+        border-radius: 12px;
+        padding: 12px;
+      }
+
+      textarea {
+        width: 100%;
+        background: #0b1224;
+        color: #e5e7eb;
+        border: 1px solid #1f2937;
+        border-radius: 10px;
+        padding: 10px;
+        resize: vertical;
+        min-height: 70px;
+        font-family: inherit;
+      }
+
+      button {
+        background: linear-gradient(90deg, #22d3ee, #38bdf8);
+        color: #0b1020;
+        border: none;
+        border-radius: 10px;
+        padding: 10px 16px;
+        font-weight: 700;
+        cursor: pointer;
+        box-shadow: 0 10px 30px rgba(34, 211, 238, 0.35);
+      }
+
+      button:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+        box-shadow: none;
+      }
+
+      .assistant-response {
+        margin-top: 10px;
+        padding: 10px;
+        border-radius: 10px;
+        background: #0b1224;
+        border: 1px solid #1f2937;
+        color: #e5e7eb;
+        min-height: 40px;
+      }
+
+      .empty-state {
+        padding: 20px;
+        text-align: center;
+        color: #94a3b8;
+        border: 1px dashed #1f2937;
+        border-radius: 12px;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <div class="brand">
+        <div class="pulse"></div>
+        <div>
+          <div>Patient Monitoring Station</div>
+          <small style="color: var(--muted)">Live sensor feed + AI assistant</small>
+        </div>
+      </div>
+      <div style="color: var(--muted); font-size: 14px">Streaming vitals in real time</div>
+    </header>
+
+    <main>
+      <section class="panel sidebar">
+        <h2>Patients</h2>
+        <div id="patientList"></div>
+      </section>
+
+      <section class="panel">
+        <div class="detail-header">
+          <div class="detail-meta">
+            <h2 id="patientTitle">Select a patient</h2>
+            <div class="meta-row">
+              <div class="chip" id="patientHash">—</div>
+              <div class="chip" id="patientUpdated">—</div>
+            </div>
+          </div>
+          <div class="chip" id="patientStatus">Waiting for data…</div>
+        </div>
+
+        <div id="detailMetrics" class="vital-grid" style="margin-bottom: 12px">
+          <div>HR: —</div>
+          <div>SpO₂: —</div>
+          <div>Temp: —</div>
+        </div>
+
+        <div class="chart-grid">
+          <div class="chart-card">
+            <h3>Heart Rate (bpm)</h3>
+            <canvas id="hrChart" height="120"></canvas>
+          </div>
+          <div class="chart-card">
+            <h3>SpO₂ (%)</h3>
+            <canvas id="spoChart" height="120"></canvas>
+          </div>
+          <div class="chart-card">
+            <h3>Temperature (°C)</h3>
+            <canvas id="tempChart" height="120"></canvas>
+          </div>
+        </div>
+
+        <div class="assistant">
+          <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px">
+            <div style="font-weight: 700">AI Rounds Assistant</div>
+            <small style="color: var(--muted)">Ask about the selected patient</small>
+          </div>
+          <textarea id="aiQuestion" placeholder="e.g. Is this patient stable? Any oxygen issues?"></textarea>
+          <div
+            style="margin-top: 8px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap"
+          >
+            <button id="askButton">Ask</button>
+            <label style="display: flex; align-items: center; gap: 6px; color: #cbd5e1">
+              <input type="checkbox" id="useOllama" />
+              <span>Use Ollama agentic chain</span>
+            </label>
+            <small style="color: var(--muted)">
+              Uses current vitals; device context is included when selected.
+            </small>
+          </div>
+          <div class="assistant-response" id="aiResponse">No question yet.</div>
+        </div>
+      </section>
+    </main>
+
+    <script>
+      const API_BASE = '';
+      const MAX_POINTS = 40;
+      const patients = new Map();
+      const miniCharts = new Map();
+      let selectedId = null;
+      let charts;
+
+      function initCharts() {
+        const options = (color) => ({
+          type: 'line',
+          data: { labels: [], datasets: [{ data: [], borderColor: color, tension: 0.3, pointRadius: 0 }] },
+          options: {
+            responsive: true,
+            animation: false,
+            plugins: { legend: { display: false } },
+            scales: {
+              x: { ticks: { display: false }, grid: { display: false } },
+              y: { ticks: { color: '#94a3b8' }, grid: { color: '#1f2937' } },
+            },
+          },
+        });
+
+        charts = {
+          hr: new Chart(document.getElementById('hrChart').getContext('2d'), options('#22d3ee')),
+          spo: new Chart(document.getElementById('spoChart').getContext('2d'), options('#4ade80')),
+          temp: new Chart(document.getElementById('tempChart').getContext('2d'), options('#fbbf24')),
+        };
+      }
+
+      function formatTime(ts) {
+        const d = new Date(ts);
+        return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+      }
+
+      function updateHistory(record, message) {
+        const { heart_rate, spo2, temperature } = message.vitals;
+        const label = formatTime(message.timestamp);
+        record.labels.push(label);
+        record.heart.push(heart_rate);
+        record.spo.push(spo2);
+        record.temp.push(temperature);
+        if (record.labels.length > MAX_POINTS) {
+          ['labels', 'heart', 'spo', 'temp'].forEach((k) => record[k].shift());
+        }
+      }
+
+      function setSelected(deviceId) {
+        selectedId = deviceId;
+        renderDetail();
+      }
+
+      function renderPatients() {
+        const container = document.getElementById('patientList');
+        container.innerHTML = '';
+
+        if (!patients.size) {
+          container.innerHTML = '<div class="empty-state">Waiting for device data…</div>';
+          return;
+        }
+
+        [...patients.values()]
+          .sort((a, b) => b.updated - a.updated)
+          .forEach((patient) => {
+            const card = document.createElement('div');
+            card.className = 'patient-card' + (patient.device_id === selectedId ? ' active' : '');
+            card.onclick = () => setSelected(patient.device_id);
+
+            const alerting = patient.flags.length > 0;
+            card.innerHTML = `
+              <div class="patient-header">
+                <div class="patient-id">${patient.device_id}</div>
+                <div class="status-pill ${alerting ? 'status-alert' : 'status-ok'}">${
+              alerting ? 'Attention' : 'Stable'
+            }</div>
+              </div>
+              <div class="vital-grid">
+                <div>HR ${patient.vitals.heart_rate.toFixed(0)}</div>
+                <div>SpO₂ ${patient.vitals.spo2.toFixed(0)}%</div>
+                <div>Temp ${patient.vitals.temperature.toFixed(1)}°C</div>
+              </div>
+              <canvas class="mini-chart" id="mini-${patient.device_id}"></canvas>
+            `;
+
+            container.appendChild(card);
+            renderMiniChart(patient);
+          });
+      }
+
+      function renderMiniChart(patient) {
+        const canvas = document.getElementById(`mini-${patient.device_id}`);
+        if (!canvas) return;
+        const ctx = canvas.getContext('2d');
+        const config = {
+          type: 'line',
+          data: {
+            labels: patient.history.labels,
+            datasets: [
+              {
+                data: patient.history.heart,
+                borderColor: patient.flags.length ? '#f87171' : '#22d3ee',
+                tension: 0.35,
+                pointRadius: 0,
+                borderWidth: 2,
+                fill: false,
+              },
+            ],
+          },
+          options: {
+            animation: false,
+            plugins: { legend: { display: false } },
+            scales: {
+              x: { display: false },
+              y: { display: false },
+            },
+          },
+        };
+
+        if (miniCharts.has(patient.device_id)) {
+          const chart = miniCharts.get(patient.device_id);
+          chart.data.labels = patient.history.labels;
+          chart.data.datasets[0].data = patient.history.heart;
+          chart.update();
+        } else {
+          miniCharts.set(patient.device_id, new Chart(ctx, config));
+        }
+      }
+
+      function renderDetail() {
+        const title = document.getElementById('patientTitle');
+        const hash = document.getElementById('patientHash');
+        const updated = document.getElementById('patientUpdated');
+        const status = document.getElementById('patientStatus');
+        const metrics = document.getElementById('detailMetrics');
+
+        if (!selectedId || !patients.has(selectedId)) {
+          title.textContent = 'Select a patient';
+          hash.textContent = '—';
+          updated.textContent = '—';
+          status.textContent = 'Waiting for data…';
+          metrics.innerHTML = '<div>HR: —</div><div>SpO₂: —</div><div>Temp: —</div>';
+          Object.values(charts || {}).forEach((c) => {
+            c.data.labels = [];
+            c.data.datasets[0].data = [];
+            c.update();
+          });
+          return;
+        }
+
+        const patient = patients.get(selectedId);
+        title.textContent = `Patient ${patient.device_id}`;
+        hash.textContent = `Hash: ${patient.patient_hash.slice(0, 12)}…`;
+        updated.textContent = `Updated: ${formatTime(patient.timestamp)}`;
+        status.textContent = patient.flags.length ? `Alerts: ${patient.flags.join(', ')}` : 'Stable';
+        status.style.color = patient.flags.length ? '#0b1020' : '#0b1020';
+        status.style.background = patient.flags.length ? 'rgba(248, 113, 113, 0.95)' : 'rgba(74, 222, 128, 0.9)';
+
+        metrics.innerHTML = `
+          <div>HR: ${patient.vitals.heart_rate.toFixed(0)} bpm</div>
+          <div>SpO₂: ${patient.vitals.spo2.toFixed(0)}%</div>
+          <div>Temp: ${patient.vitals.temperature.toFixed(1)}°C</div>
+        `;
+
+        if (charts) {
+          charts.hr.data.labels = patient.history.labels;
+          charts.hr.data.datasets[0].data = patient.history.heart;
+          charts.hr.update();
+
+          charts.spo.data.labels = patient.history.labels;
+          charts.spo.data.datasets[0].data = patient.history.spo;
+          charts.spo.update();
+
+          charts.temp.data.labels = patient.history.labels;
+          charts.temp.data.datasets[0].data = patient.history.temp;
+          charts.temp.update();
+        }
+      }
+
+      function processMessage(message) {
+        const flags = [];
+        if (message.vitals.heart_rate > 110) flags.push('High HR');
+        if (message.vitals.spo2 < 92) flags.push('Low SpO₂');
+        if (message.vitals.temperature > 37.8) flags.push('Fever');
+        if (message.vitals.fall_detected) flags.push('Fall');
+
+        const existing = patients.get(message.device_id);
+        const history = existing ? existing.history : { labels: [], heart: [], spo: [], temp: [] };
+        updateHistory(history, message);
+
+        patients.set(message.device_id, {
+          ...message,
+          updated: new Date(message.timestamp).getTime(),
+          history,
+          flags,
+        });
+
+        if (!selectedId) {
+          selectedId = message.device_id;
+        }
+
+        renderPatients();
+        renderDetail();
+      }
+
+      async function fetchInitial() {
+        try {
+          const res = await fetch(`${API_BASE}/vitals`);
+          const data = await res.json();
+          data.forEach(processMessage);
+        } catch (err) {
+          console.error('Failed to load initial vitals', err);
+        }
+      }
+
+      function connectStream() {
+        const source = new EventSource(`${API_BASE}/stream/vitals`);
+        source.onmessage = (event) => {
+          const payload = JSON.parse(event.data);
+          processMessage(payload);
+        };
+        source.onerror = () => {
+          console.warn('Stream disconnected, retrying…');
+          source.close();
+          setTimeout(connectStream, 2000);
+        };
+      }
+
+      async function askAssistant() {
+        const button = document.getElementById('askButton');
+        const responseBox = document.getElementById('aiResponse');
+        const question = document.getElementById('aiQuestion').value.trim();
+        const useOllama = document.getElementById('useOllama').checked;
+        if (!question) return;
+
+        button.disabled = true;
+        responseBox.textContent = 'Thinking…';
+        const payload = { question, use_ollama: useOllama };
+        if (useOllama) payload.provider = 'ollama';
+        if (selectedId) payload.device_id = selectedId;
+
+        try {
+          const res = await fetch(`${API_BASE}/ai/ask`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+          });
+          const data = await res.json();
+          responseBox.textContent = data.answer || 'No answer generated.';
+        } catch (err) {
+          console.error(err);
+          responseBox.textContent = 'Assistant unavailable.';
+        } finally {
+          button.disabled = false;
+        }
+      }
+
+      document.getElementById('askButton').addEventListener('click', askAssistant);
+
+      window.addEventListener('load', () => {
+        initCharts();
+        fetchInitial();
+        connectStream();
+      });
+    </script>
+  </body>
+</html>

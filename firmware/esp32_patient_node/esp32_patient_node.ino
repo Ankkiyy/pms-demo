@@ -12,12 +12,22 @@
 #include <ESP8266HTTPClient.h>
 #include <time.h>
 #include <string.h>
+#include <math.h>
+#include <Adafruit_Sensor.h>
+#include <Adafruit_MPU6050.h>
+#include <DHT.h>
 #include "MAX30105.h"
 #include "heartRate.h"
 
 MAX30105 particleSensor;
 long lastIrSample = 0;
 long lastRedSample = 0;
+
+Adafruit_MPU6050 mpu;
+
+const uint8_t DHT_PIN = 2;   // D4
+const uint8_t DHT_TYPE = DHT22;
+const int MPU_INT_PIN = 16;  // D0 (optional interrupt pin)
 
 // Wi-Fi credentials and backend discovery
 const char *WIFI_SSID = "JarvisX";
@@ -40,6 +50,8 @@ const int D2 = 4;
 const int RED_LED_PIN   = 12;  // D6
 const int GREEN_LED_PIN = 13;  // D7
 
+DHT dht(DHT_PIN, DHT_TYPE);
+
 long lastBeat = 0;
 float beatsPerMinute = 0.0;
 float spO2 = 0.0;
@@ -52,9 +64,31 @@ const int smoothingFactor = 20;
 const long MIN_IR_VALUE = 5000;
 bool fingerDetected = false;
 
+bool mpuReady = false;
+float ambientTempC = NAN;
+float ambientHumidity = NAN;
+unsigned long lastEnvReadMs = 0;
+const unsigned long envReadIntervalMs = 5000;
+
+bool motionValid = false;
+unsigned long lastMotionReadMs = 0;
+const unsigned long motionReadIntervalMs = 200;
+float accelX = 0.0f;
+float accelY = 0.0f;
+float accelZ = 0.0f;
+float gyroX = 0.0f;
+float gyroY = 0.0f;
+float gyroZ = 0.0f;
+float accelMagnitudeG = NAN;
+bool fallDetected = false;
+
+const float FALL_LOWER_G = 0.5f;
+const float FALL_UPPER_G = 2.8f;
+
 // ---------------- PROTOTYPES ----------------
 boolean checkForBeat(long irValue);
 float calculateSpO2Simple(long redValue, long irValue);
+String jsonFloat(float value, uint8_t decimals = 2);
 void connectWiFi();
 bool discoverBackend();
 String isoTimestamp();
@@ -69,6 +103,9 @@ void setup() {
   Serial.println();
   Serial.println("Booting Freenove ESP8266 + MAX30105 (serial-only) ...");
 
+  dht.begin();
+  Serial.println("DHT22 initialised.");
+
   connectWiFi();
   configTime(0, 0, "pool.ntp.org", "time.nist.gov");
   discoverBackend();
@@ -78,7 +115,19 @@ void setup() {
   digitalWrite(RED_LED_PIN, LOW);
   digitalWrite(GREEN_LED_PIN, LOW);
 
+  pinMode(MPU_INT_PIN, INPUT_PULLUP);
+
   Wire.begin(D2, D1); // SDA, SCL
+
+  if (mpu.begin()) {
+    mpuReady = true;
+    mpu.setAccelerometerRange(MPU6050_RANGE_4_G);
+    mpu.setGyroRange(MPU6050_RANGE_500_DEG);
+    mpu.setFilterBandwidth(MPU6050_BAND_21_HZ);
+    Serial.println("MPU6050 initialised.");
+  } else {
+    Serial.println("WARNING: MPU6050 not fou  nd. Motion data disabled.");
+  }
 
   if (!particleSensor.begin(Wire, I2C_SPEED_FAST)) {
     Serial.println("ERROR: MAX30105 not found. Check wiring and 3.3V power.");
@@ -104,11 +153,64 @@ void setup() {
 
 // ---------------- LOOP ----------------
 void loop() {
+  unsigned long now = millis();
   long irValue = particleSensor.getIR();
   long redValue = particleSensor.getRed();
   float temperatureC = particleSensor.readTemperature();
   lastIrSample = irValue;
   lastRedSample = redValue;
+
+  if (now - lastEnvReadMs >= envReadIntervalMs) {
+    lastEnvReadMs = now;
+    float newTemp = dht.readTemperature();
+    float newHumidity = dht.readHumidity();
+    if (!isnan(newTemp)) {
+      ambientTempC = newTemp;
+      Serial.print("Ambient Temp(C): ");
+      Serial.println(ambientTempC, 1);
+    }
+    if (!isnan(newHumidity)) {
+      ambientHumidity = newHumidity;
+      Serial.print("Humidity(%): ");
+      Serial.println(ambientHumidity, 1);
+    }
+  }
+
+  if (mpuReady && (now - lastMotionReadMs >= motionReadIntervalMs)) {
+    lastMotionReadMs = now;
+    sensors_event_t accelEvent;
+    sensors_event_t gyroEvent;
+    sensors_event_t tempEvent;
+    mpu.getEvent(&accelEvent, &gyroEvent, &tempEvent);
+    accelX = accelEvent.acceleration.x;
+    accelY = accelEvent.acceleration.y;
+    accelZ = accelEvent.acceleration.z;
+    gyroX = gyroEvent.gyro.x;
+    gyroY = gyroEvent.gyro.y;
+    gyroZ = gyroEvent.gyro.z;
+    accelMagnitudeG = sqrtf((accelX * accelX) + (accelY * accelY) + (accelZ * accelZ)) / 9.80665f;
+    motionValid = true;
+    Serial.print("Accel (m/s^2): ");
+    Serial.print(accelX, 2);
+    Serial.print(", ");
+    Serial.print(accelY, 2);
+    Serial.print(", ");
+    Serial.print(accelZ, 2);
+    Serial.print("  |  Gyro (deg/s): ");
+    Serial.print(gyroX, 2);
+    Serial.print(", ");
+    Serial.print(gyroY, 2);
+    Serial.print(", ");
+    Serial.println(gyroZ, 2);
+    Serial.print("Accel Magnitude (g): ");
+    Serial.println(accelMagnitudeG, 2);
+  }
+
+  fallDetected = motionValid &&
+                 (accelMagnitudeG > FALL_UPPER_G || accelMagnitudeG < FALL_LOWER_G);
+  if (fallDetected) {
+    Serial.println("Motion alert: fall threshold exceeded.");
+  }
 
   // finger detection
   fingerDetected = (irValue > MIN_IR_VALUE);
@@ -202,6 +304,13 @@ float calculateSpO2Simple(long redValue, long irValue) {
   float ratio = (float)redValue / (float)irValue;
   float spO2 = 110.0 - (25.0 * ratio);
   return constrain(spO2, 0.0, 100.0);
+}
+
+String jsonFloat(float value, uint8_t decimals) {
+  if (isnan(value) || isinf(value)) {
+    return String("null");
+  }
+  return String(value, decimals);
 }
 
 // ---------------- NETWORK HELPERS ----------------
@@ -329,13 +438,18 @@ void sendVitalsToBackend(float temperatureC) {
 
   String url = backendBaseUrl + "/device/" + DEVICE_ID + "/vitals";
   String payload = "{\"device_id\":\"" + String(DEVICE_ID) + "\",";
+  float hrValue = (fingerDetected && beatsPerMinute > 0.0f) ? beatsPerMinute : NAN;
+  float spo2Value = (fingerDetected && spO2 > 0.0f) ? spO2 : NAN;
+  float tempValue = fingerDetected ? temperatureC : NAN;
+
   payload += "\"patient_hash\":\"" + String(PATIENT_HASH) + "\",";
   payload += "\"timestamp\":\"" + isoTimestamp() + "\",";
   payload += "\"vitals\":{";
-  payload += "\"heart_rate\":" + String(beatsPerMinute, 1) + ",";
-  payload += "\"spo2\":" + String(spO2, 1) + ",";
-  payload += "\"temperature\":" + String(temperatureC, 1) + ",";
-  payload += "\"fall_detected\":false";
+  payload += "\"heart_rate\":" + jsonFloat(hrValue, 1) + ",";
+  payload += "\"spo2\":" + jsonFloat(spo2Value, 1) + ",";
+  payload += "\"temperature\":" + jsonFloat(tempValue, 1) + ",";
+  payload += "\"fall_detected\":";
+  payload += (fallDetected ? "true" : "false");
   payload += "}}";
 
   bool ok = postJson(url, payload);
@@ -345,11 +459,30 @@ void sendVitalsToBackend(float temperatureC) {
   if (isInhaling) breathState = "inhale";
   else if (isExhaling) breathState = "exhale";
 
-  String telemetry = "{\"respiration\":\"" + breathState + "\",";
-  telemetry += "\"fingerDetected\":" + String(fingerDetected ? "true" : "false") + ",";
-  telemetry += "\"irMovingAverage\":" + String(irMovingAverage) + ",";
-  telemetry += "\"ir\":" + String(lastIrSample) + ",";
-  telemetry += "\"red\":" + String(lastRedSample) + "}";
+  String telemetry = "{\"respiration\":\"" + breathState + "\"";
+  telemetry += ",\"fingerDetected\":";
+  telemetry += (fingerDetected ? "true" : "false");
+  telemetry += ",\"irMovingAverage\":" + String(irMovingAverage);
+  telemetry += ",\"ir\":" + String(lastIrSample);
+  telemetry += ",\"red\":" + String(lastRedSample);
+  telemetry += ",\"fallDetected\":";
+  telemetry += (fallDetected ? "true" : "false");
+  if (!isnan(ambientTempC)) {
+    telemetry += ",\"ambientTemp\":" + jsonFloat(ambientTempC, 1);
+  }
+  if (!isnan(ambientHumidity)) {
+    telemetry += ",\"humidity\":" + jsonFloat(ambientHumidity, 1);
+  }
+  if (motionValid) {
+    telemetry += ",\"accelX\":" + jsonFloat(accelX, 2);
+    telemetry += ",\"accelY\":" + jsonFloat(accelY, 2);
+    telemetry += ",\"accelZ\":" + jsonFloat(accelZ, 2);
+    telemetry += ",\"gyroX\":" + jsonFloat(gyroX, 2);
+    telemetry += ",\"gyroY\":" + jsonFloat(gyroY, 2);
+    telemetry += ",\"gyroZ\":" + jsonFloat(gyroZ, 2);
+    telemetry += ",\"accelMagnitudeG\":" + jsonFloat(accelMagnitudeG, 2);
+  }
+  telemetry += "}";
 
   if (ok) {
     sendTelemetry(telemetry);

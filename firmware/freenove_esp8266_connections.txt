@@ -21,11 +21,21 @@ Status LEDs (discrete 5 mm LEDs with series resistors)
 - Green LED anode → D7 (GPIO13) through a 220 Ω resistor
 - Green LED cathode → GND
 
-Optional Piezo Buzzer (active, 3.3 V compliant)
+Temperature & Humidity Sensor (DHT22)
 ----------------------------------------------
-- Positive lead → D8 (GPIO15)
-- Negative lead → GND
-- Add a small NPN transistor + diode if you use a larger passive buzzer that draws >20 mA.
+- VCC  → 3V3
+- GND  → GND
+- DATA → D4 (GPIO2)
+- Place a 10 kΩ pull-up resistor between DATA and 3V3.
+
+IMU (MPU9250 breakout)
+--------------------------------
+- VCC  → 3V3 (verify your board supports 3.3 V input; most GY-521 boards do)
+- GND  → GND
+- SCL  → D1 (GPIO5)
+- SDA  → D2 (GPIO4)
+- AD0  → GND (keeps I²C address at 0x68; tie to 3V3 if you need 0x69)
+- INT  → D0 (GPIO16) [optional if you plan to use motion interrupts]
 
 USB / Serial
 -----------

@@ -52,6 +52,11 @@ _DEMO_PATIENTS = [
         "heart_rate": 76.0,
         "spo2": 98.0,
         "temperature": 36.6,
+        "ambient_temperature": 23.4,
+        "humidity": 42.0,
+        "activity_level": 0.18,
+        "activity_state": "sitting",
+        "steps_walked": 1240,
     },
     {
         "device_id": "esp-02",
@@ -59,6 +64,11 @@ _DEMO_PATIENTS = [
         "heart_rate": 88.0,
         "spo2": 94.0,
         "temperature": 37.1,
+        "ambient_temperature": 24.1,
+        "humidity": 48.0,
+        "activity_level": 0.32,
+        "activity_state": "walking",
+        "steps_walked": 2530,
     },
     {
         "device_id": "esp-03",
@@ -66,6 +76,11 @@ _DEMO_PATIENTS = [
         "heart_rate": 64.0,
         "spo2": 97.0,
         "temperature": 36.4,
+        "ambient_temperature": 22.8,
+        "humidity": 38.0,
+        "activity_level": 0.12,
+        "activity_state": "sleeping",
+        "steps_walked": 840,
     },
 ]
 
@@ -309,6 +324,15 @@ def _next_vitals(patient: dict) -> Vitals:
     temperature = _bounded_jitter(
         patient["temperature"], variance=0.3, minimum=35.6, maximum=39.4
     )
+    ambient_temperature = _bounded_jitter(
+        patient["ambient_temperature"], variance=0.6, minimum=19.0, maximum=28.0
+    )
+    humidity = _bounded_jitter(patient["humidity"], variance=5.0, minimum=25.0, maximum=70.0)
+    activity_level = _bounded_jitter(
+        patient["activity_level"], variance=0.15, minimum=0.0, maximum=1.0
+    )
+    steps_walked = int(patient.get("steps_walked", 0))
+    activity_state = patient.get("activity_state") or _classify_activity(activity_level)
 
     if random() < 0.05:
         heart_rate += 12 * random()
@@ -316,6 +340,21 @@ def _next_vitals(patient: dict) -> Vitals:
         spo2 -= 4 * random()
     if random() < 0.02:
         temperature += 0.6 * random()
+    if random() < 0.03:
+        activity_level = min(1.0, activity_level + 0.35 * random())
+
+    target_state = _classify_activity(activity_level)
+    if target_state != activity_state and random() < 0.4:
+        activity_state = target_state
+    elif random() < 0.06 and activity_state == "sleeping":
+        # Occasional stirring
+        activity_state = "sitting"
+
+    step_gain = int(max(0, 4 + activity_level * 25 + random() * 10))
+    steps_walked += step_gain
+    patient["steps_walked"] = steps_walked
+    patient["activity_level"] = activity_level
+    patient["activity_state"] = activity_state
 
     fall_detected = random() < 0.005
 
@@ -323,6 +362,11 @@ def _next_vitals(patient: dict) -> Vitals:
         heart_rate=heart_rate,
         spo2=spo2,
         temperature=temperature,
+        ambient_temperature=ambient_temperature,
+        humidity=humidity,
+        activity_level=activity_level,
+        activity_state=activity_state,
+        steps_walked=steps_walked,
         fall_detected=fall_detected,
     )
 
@@ -333,10 +377,22 @@ def _bounded_jitter(base: float, variance: float, minimum: float, maximum: float
     return max(minimum, min(maximum, value))
 
 
+def _classify_activity(activity_level: float) -> str:
+    if activity_level < 0.12:
+        return "sleeping"
+    if activity_level < 0.28:
+        return "sitting"
+    if activity_level < 0.68:
+        return "walking"
+    return "exercising"
+
+
 def _describe_vitals(vitals: Vitals) -> str:
     return (
         f"HR {vitals.heart_rate:.0f} bpm | SpO₂ {vitals.spo2:.0f}% | "
-        f"Temp {vitals.temperature:.1f}°C"
+        f"Temp {vitals.temperature:.1f}°C | Room {vitals.ambient_temperature:.1f}°C | "
+        f"Humidity {vitals.humidity:.0f}% | Activity {vitals.activity_level:.2f} ({vitals.activity_state}) | "
+        f"Steps {vitals.steps_walked}"
     )
 
 
@@ -440,6 +496,22 @@ def _build_patient_response(question: str, vitals: VitalsMessage) -> str:
         focus = (
             f" Temperature is {vitals.vitals.temperature:.1f}°C; "
             f"threshold is {thresholds.max_temperature}°C."
+        )
+    elif "humidity" in question_lower or "environment" in question_lower:
+        focus = (
+            f" Room temp is {vitals.vitals.ambient_temperature:.1f}°C with "
+            f"{vitals.vitals.humidity:.0f}% humidity nearby."
+        )
+    elif "activity" in question_lower or "movement" in question_lower:
+        focus = (
+            " Activity monitor shows "
+            f"a score of {vitals.vitals.activity_level:.2f} ({vitals.vitals.activity_state}) with "
+            + ("a fall alert." if vitals.vitals.fall_detected else "no falls detected.")
+        )
+    elif "step" in question_lower or "walk" in question_lower:
+        focus = (
+            f" Recorded steps today: {vitals.vitals.steps_walked:,} while {vitals.vitals.activity_state}. "
+            "Counts climb faster when movement spikes."
         )
     elif "fall" in question_lower:
         focus = (

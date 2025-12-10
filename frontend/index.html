@@ -152,7 +152,7 @@
 
       .vital-grid {
         display: grid;
-        grid-template-columns: repeat(3, 1fr);
+        grid-template-columns: repeat(auto-fit, minmax(80px, 1fr));
         gap: 8px;
         margin-bottom: 8px;
         font-size: 12px;
@@ -206,6 +206,128 @@
         margin: 0 0 8px;
         font-size: 14px;
         color: #cbd5e1;
+      }
+
+      .env-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 10px;
+        margin-bottom: 12px;
+      }
+
+      .metric-card {
+        background: #0b1224;
+        border: 1px solid #1f2937;
+        border-radius: 12px;
+        padding: 10px 12px;
+        display: grid;
+        gap: 4px;
+      }
+
+      .metric-label {
+        font-size: 12px;
+        color: var(--muted);
+      }
+
+      .metric-value {
+        font-weight: 700;
+        font-size: 20px;
+      }
+
+      .metric-sub {
+        font-size: 12px;
+        color: #cbd5e1;
+      }
+
+      .meter {
+        height: 8px;
+        background: #0f172a;
+        border-radius: 999px;
+        overflow: hidden;
+        border: 1px solid #1f2937;
+      }
+
+      .meter > div {
+        height: 100%;
+        background: linear-gradient(90deg, #22d3ee, #38bdf8);
+      }
+
+      .chat-toggle {
+        position: fixed;
+        right: 20px;
+        bottom: 20px;
+        z-index: 20;
+        padding: 12px 16px;
+        border-radius: 12px;
+        background: linear-gradient(135deg, #22d3ee, #38bdf8);
+        color: #0b1020;
+        border: 1px solid #22d3ee;
+        font-weight: 700;
+        box-shadow: 0 12px 40px rgba(34, 211, 238, 0.4);
+        cursor: pointer;
+      }
+
+      .chat-panel {
+        position: fixed;
+        right: 20px;
+        top: 96px;
+        width: 360px;
+        max-width: calc(100vw - 32px);
+        background: linear-gradient(145deg, #0f172a, #0b1224);
+        border: 1px solid #1f2937;
+        border-radius: 14px;
+        box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+        z-index: 30;
+        display: grid;
+        grid-template-rows: auto 1fr auto;
+        transition: transform 0.2s ease, opacity 0.2s ease;
+      }
+
+      .chat-panel.hidden {
+        opacity: 0;
+        pointer-events: none;
+        transform: translateY(8px);
+      }
+
+      .chat-header {
+        padding: 12px;
+        border-bottom: 1px solid #1f2937;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 10px;
+      }
+
+      .chat-header small {
+        color: var(--muted);
+      }
+
+      .chat-body {
+        max-height: 50vh;
+        overflow-y: auto;
+        padding: 12px;
+        display: grid;
+        gap: 10px;
+      }
+
+      .chat-input {
+        padding: 12px;
+        border-top: 1px solid #1f2937;
+        background: rgba(10, 16, 32, 0.7);
+        border-radius: 0 0 14px 14px;
+      }
+
+      .chat-controls {
+        display: flex;
+        gap: 10px;
+        align-items: center;
+        flex-wrap: wrap;
+        margin-top: 8px;
+      }
+
+      .chat-message .bubble {
+        background: #0b1224;
+        border: 1px solid #1f2937;
       }
 
       .assistant {
@@ -365,7 +487,32 @@
         <div id="detailMetrics" class="vital-grid" style="margin-bottom: 12px">
           <div>HR: —</div>
           <div>SpO₂: —</div>
-          <div>Temp: —</div>
+          <div>Body Temp: —</div>
+          <div>Activity: —</div>
+          <div>Steps: —</div>
+        </div>
+
+        <div id="environmentStatus" class="env-grid">
+          <div class="metric-card">
+            <div class="metric-label">Room Temp</div>
+            <div class="metric-value">—</div>
+            <div class="metric-sub">Monitoring ambient comfort</div>
+          </div>
+          <div class="metric-card">
+            <div class="metric-label">Humidity</div>
+            <div class="metric-value">—</div>
+            <div class="metric-sub">—</div>
+          </div>
+          <div class="metric-card">
+            <div class="metric-label">Activity</div>
+            <div class="metric-value">—</div>
+            <div class="metric-sub">Accelerometer feed</div>
+          </div>
+          <div class="metric-card">
+            <div class="metric-label">Steps walked</div>
+            <div class="metric-value">—</div>
+            <div class="metric-sub">Daily total</div>
+          </div>
         </div>
 
         <div class="chart-grid">
@@ -381,55 +528,56 @@
             <h3>Temperature (°C)</h3>
             <canvas id="tempChart" height="120"></canvas>
           </div>
-        </div>
-
-        <div class="assistant">
-          <div
-            style="
-              display: flex;
-              align-items: center;
-              gap: 8px;
-              margin-bottom: 8px;
-            "
-          >
-            <div style="font-weight: 700">AI Rounds Assistant</div>
-            <small style="color: var(--muted)"
-              >Ask about the selected patient</small
-            >
+          <div class="chart-card">
+            <h3>Room Temp (°C)</h3>
+            <canvas id="ambientChart" height="120"></canvas>
           </div>
-          <textarea
-            id="aiQuestion"
-            placeholder="e.g. Is this patient stable? Any oxygen issues?"
-          ></textarea>
-          <div
-            style="
-              margin-top: 8px;
-              display: flex;
-              gap: 10px;
-              align-items: center;
-              flex-wrap: wrap;
-            "
-          >
-            <button id="askButton">Ask</button>
-            <label
-              style="
-                display: flex;
-                align-items: center;
-                gap: 6px;
-                color: #cbd5e1;
-              "
-            >
-              <input type="checkbox" id="useOllama" />
-              <span>Use Ollama agentic chain</span>
-            </label>
-            <small style="color: var(--muted)">
-              Uses current vitals; device context is included when selected.
-            </small>
+          <div class="chart-card">
+            <h3>Humidity (%)</h3>
+            <canvas id="humidityChart" height="120"></canvas>
           </div>
-          <div class="assistant-response" id="aiResponse">No question yet.</div>
+          <div class="chart-card">
+            <h3>Activity (0-1)</h3>
+            <canvas id="activityChart" height="120"></canvas>
+          </div>
+          <div class="chart-card">
+            <h3>Steps (cumulative)</h3>
+            <canvas id="stepsChart" height="120"></canvas>
+          </div>
         </div>
       </section>
     </main>
+
+    <button class="chat-toggle" id="chatToggle">AI Assistant</button>
+
+    <div class="chat-panel hidden" id="chatPanel">
+      <div class="chat-header">
+        <div>
+          <div style="font-weight: 700">AI Rounds Assistant</div>
+          <small id="chatContext">Context: select a patient to focus.</small>
+        </div>
+        <button class="close" id="chatClose" aria-label="Close chat">✕</button>
+      </div>
+      <div class="chat-body" id="chatHistory">
+        <div class="empty-state">Ask about vitals, room conditions, or activity.</div>
+      </div>
+      <div class="chat-input">
+        <textarea
+          id="aiQuestion"
+          placeholder="e.g. Is this patient stable? Any oxygen issues?"
+        ></textarea>
+        <div class="chat-controls">
+          <label style="display: flex; align-items: center; gap: 6px; color: #cbd5e1">
+            <input type="checkbox" id="useOllama" />
+            <span>Use Ollama agentic chain</span>
+          </label>
+          <small style="color: var(--muted)">
+            Uses current vitals with device context when selected.
+          </small>
+          <button id="askButton" style="margin-left: auto">Send</button>
+        </div>
+      </div>
+    </div>
 
     <script>
       const API_BASE = "http://localhost:8000";
@@ -438,6 +586,13 @@
       const miniCharts = new Map();
       let selectedId = null;
       let charts;
+
+      const ACTIVITY_THRESHOLDS = [
+        { max: 0.12, label: "sleeping" },
+        { max: 0.28, label: "sitting" },
+        { max: 0.68, label: "walking" },
+        { max: 1, label: "exercising" },
+      ];
 
       function initCharts() {
         const options = (color) => ({
@@ -472,6 +627,22 @@
             document.getElementById("tempChart").getContext("2d"),
             options("#fbbf24")
           ),
+          ambient: new Chart(
+            document.getElementById("ambientChart").getContext("2d"),
+            options("#38bdf8")
+          ),
+          humidity: new Chart(
+            document.getElementById("humidityChart").getContext("2d"),
+            options("#a78bfa")
+          ),
+          activity: new Chart(
+            document.getElementById("activityChart").getContext("2d"),
+            options("#fb7185")
+          ),
+          steps: new Chart(
+            document.getElementById("stepsChart").getContext("2d"),
+            options("#f97316")
+          ),
         };
       }
 
@@ -484,21 +655,63 @@
         });
       }
 
+      function deriveActivityState(vitals) {
+        if (vitals.activity_state) return vitals.activity_state;
+        const score = Number(vitals.activity_level || 0);
+        const match = ACTIVITY_THRESHOLDS.find((bucket) => score <= bucket.max);
+        return match ? match.label : "walking";
+      }
+
+      function formatActivity(vitals) {
+        const state = deriveActivityState(vitals);
+        const score = Number(vitals.activity_level || 0);
+        return {
+          state,
+          label: state.charAt(0).toUpperCase() + state.slice(1),
+          score: score.toFixed(2),
+        };
+      }
+
       function updateHistory(record, message) {
-        const { heart_rate, spo2, temperature } = message.vitals;
+        const {
+          heart_rate,
+          spo2,
+          temperature,
+          ambient_temperature,
+          humidity,
+          activity_level,
+          steps_walked,
+        } = message.vitals;
         const label = formatTime(message.timestamp);
         record.labels.push(label);
         record.heart.push(heart_rate);
         record.spo.push(spo2);
         record.temp.push(temperature);
+        record.ambient.push(ambient_temperature);
+        record.humidity.push(humidity);
+        record.activity.push(activity_level);
+        record.steps.push(steps_walked);
         if (record.labels.length > MAX_POINTS) {
-          ["labels", "heart", "spo", "temp"].forEach((k) => record[k].shift());
+          ["labels", "heart", "spo", "temp", "ambient", "humidity", "activity", "steps"].forEach(
+            (k) => record[k].shift()
+          );
         }
       }
 
       function setSelected(deviceId) {
         selectedId = deviceId;
         renderDetail();
+      }
+
+      function updateChatContext() {
+        const context = document.getElementById("chatContext");
+        if (!context) return;
+        if (selectedId && patients.has(selectedId)) {
+          const patient = patients.get(selectedId);
+          context.textContent = `Context: ${patient.device_id} (${patient.patient_hash.slice(0, 8)}…)`;
+        } else {
+          context.textContent = "Context: select a patient to focus.";
+        }
       }
 
       function renderPatients() {
@@ -521,6 +734,7 @@
             card.onclick = () => setSelected(patient.device_id);
 
             const alerting = patient.flags.length > 0;
+            const activityInfo = formatActivity(patient.vitals);
             card.innerHTML = `
               <div class="patient-header">
                 <div class="patient-id">${patient.device_id}</div>
@@ -532,6 +746,10 @@
                 <div>HR ${patient.vitals.heart_rate.toFixed(0)}</div>
                 <div>SpO₂ ${patient.vitals.spo2.toFixed(0)}%</div>
                 <div>Temp ${patient.vitals.temperature.toFixed(1)}°C</div>
+                <div>Room ${patient.vitals.ambient_temperature.toFixed(1)}°C</div>
+                <div>Hum ${patient.vitals.humidity.toFixed(0)}%</div>
+                <div>Act ${activityInfo.label}</div>
+                <div>Steps ${patient.vitals.steps_walked.toLocaleString()}</div>
               </div>
               <canvas class="mini-chart" id="mini-${
                 patient.device_id
@@ -588,6 +806,8 @@
         const updated = document.getElementById("patientUpdated");
         const status = document.getElementById("patientStatus");
         const metrics = document.getElementById("detailMetrics");
+        const environment = document.getElementById("environmentStatus");
+        updateChatContext();
 
         if (!selectedId || !patients.has(selectedId)) {
           title.textContent = "Select a patient";
@@ -595,7 +815,28 @@
           updated.textContent = "—";
           status.textContent = "Waiting for data…";
           metrics.innerHTML =
-            "<div>HR: —</div><div>SpO₂: —</div><div>Temp: —</div>";
+            "<div>HR: —</div><div>SpO₂: —</div><div>Body Temp: —</div><div>Activity: —</div>";
+          environment.innerHTML = `
+            <div class="metric-card">
+              <div class="metric-label">Room Temp</div>
+              <div class="metric-value">—</div>
+              <div class="metric-sub">Monitoring ambient comfort</div>
+            </div>
+            <div class="metric-card">
+              <div class="metric-label">Humidity</div>
+              <div class="metric-value">—</div>
+              <div class="metric-sub">—</div>
+            </div>
+            <div class="metric-card">
+              <div class="metric-label">Activity</div>
+              <div class="metric-value">—</div>
+              <div class="metric-sub">Accelerometer feed</div>
+            </div>
+            <div class="metric-card">
+              <div class="metric-label">Live activity</div>
+              <div class="metric-value">—</div>
+              <div class="metric-sub">Sitting, sleeping, walking, exercising</div>
+            </div>`;
           Object.values(charts || {}).forEach((c) => {
             c.data.labels = [];
             c.data.datasets[0].data = [];
@@ -607,7 +848,7 @@
         const patient = patients.get(selectedId);
         title.textContent = `Patient ${patient.device_id}`;
         hash.textContent = `Hash: ${patient.patient_hash.slice(0, 12)}…`;
-        updated.textContent = `Updated: ${formatTime(patient.timestamp)}`;
+        updated.textContent = `Updated ${formatTime(patient.timestamp)}`;
         status.textContent = patient.flags.length
           ? `Alerts: ${patient.flags.join(", ")}`
           : "Stable";
@@ -616,10 +857,52 @@
           ? "rgba(248, 113, 113, 0.95)"
           : "rgba(74, 222, 128, 0.9)";
 
+        const activityInfo = formatActivity(patient.vitals);
+
         metrics.innerHTML = `
           <div>HR: ${patient.vitals.heart_rate.toFixed(0)} bpm</div>
           <div>SpO₂: ${patient.vitals.spo2.toFixed(0)}%</div>
-          <div>Temp: ${patient.vitals.temperature.toFixed(1)}°C</div>
+          <div>Body Temp: ${patient.vitals.temperature.toFixed(1)}°C</div>
+          <div>Activity: ${activityInfo.label} (${activityInfo.score})</div>
+          <div>Steps: ${patient.vitals.steps_walked.toLocaleString()}</div>
+        `;
+
+        environment.innerHTML = `
+          <div class="metric-card">
+            <div class="metric-label">Room Temp</div>
+            <div class="metric-value">${patient.vitals.ambient_temperature.toFixed(1)}°C</div>
+            <div class="metric-sub">Comfort ${patient.vitals.ambient_temperature < 21 ? "cool" : patient.vitals.ambient_temperature > 27 ? "warm" : "ideal"}</div>
+          </div>
+          <div class="metric-card">
+            <div class="metric-label">Humidity</div>
+            <div class="metric-value">${patient.vitals.humidity.toFixed(0)}%</div>
+            <div class="meter"><div style="width: ${Math.min(100, Math.max(0, patient.vitals.humidity))}%;"></div></div>
+            <div class="metric-sub">${patient.vitals.humidity > 60 ? "High humidity nearby" : patient.vitals.humidity < 35 ? "Dry air" : "Comfort range"}</div>
+          </div>
+          <div class="metric-card">
+            <div class="metric-label">Activity</div>
+            <div class="metric-value">${activityInfo.label}</div>
+            <div class="meter"><div style="width: ${patient.vitals.activity_level * 100}%; background: linear-gradient(90deg, #34d399, #fb7185);"></div></div>
+            <div class="metric-sub">${activityInfo.score} score via accelerometer</div>
+          </div>
+          <div class="metric-card">
+            <div class="metric-label">Steps walked</div>
+            <div class="metric-value">${patient.vitals.steps_walked.toLocaleString()}</div>
+            <div class="metric-sub">Total today from accelerometer</div>
+          </div>
+          <div class="metric-card">
+            <div class="metric-label">Live activity</div>
+            <div class="metric-value">${activityInfo.label}</div>
+            <div class="metric-sub">${
+              activityInfo.state === "sleeping"
+                ? "Restful / eyes closed"
+                : activityInfo.state === "sitting"
+                ? "Seated or minimal movement"
+                : activityInfo.state === "walking"
+                ? "Upright and mobile"
+                : "Elevated movement / exercise"
+            }</div>
+          </div>
         `;
 
         if (charts) {
@@ -634,20 +917,44 @@
           charts.temp.data.labels = patient.history.labels;
           charts.temp.data.datasets[0].data = patient.history.temp;
           charts.temp.update();
+
+          charts.ambient.data.labels = patient.history.labels;
+          charts.ambient.data.datasets[0].data = patient.history.ambient;
+          charts.ambient.update();
+
+          charts.humidity.data.labels = patient.history.labels;
+          charts.humidity.data.datasets[0].data = patient.history.humidity;
+          charts.humidity.update();
+
+          charts.activity.data.labels = patient.history.labels;
+          charts.activity.data.datasets[0].data = patient.history.activity;
+          charts.activity.update();
+
+          charts.steps.data.labels = patient.history.labels;
+          charts.steps.data.datasets[0].data = patient.history.steps;
+          charts.steps.update();
         }
       }
 
       function processMessage(message) {
         const flags = [];
+        const activityState = deriveActivityState(message.vitals);
         if (message.vitals.heart_rate > 110) flags.push("High HR");
         if (message.vitals.spo2 < 92) flags.push("Low SpO₂");
         if (message.vitals.temperature > 37.8) flags.push("Fever");
         if (message.vitals.fall_detected) flags.push("Fall");
+        if (message.vitals.humidity > 65) flags.push("Humid room");
+        if (activityState === "exercising" || message.vitals.activity_level > 0.8)
+          flags.push("High activity");
+        if (activityState === "sleeping") flags.push("Sleeping");
 
         const existing = patients.get(message.device_id);
         const history = existing
           ? existing.history
-          : { labels: [], heart: [], spo: [], temp: [] };
+          : { labels: [], heart: [], spo: [], temp: [], ambient: [], humidity: [], activity: [], steps: [] };
+        ["ambient", "humidity", "activity", "steps"].forEach((key) => {
+          if (!history[key]) history[key] = [];
+        });
         updateHistory(history, message);
 
         patients.set(message.device_id, {
@@ -690,13 +997,16 @@
 
       async function askAssistant() {
         const button = document.getElementById("askButton");
-        const responseBox = document.getElementById("aiResponse");
         const question = document.getElementById("aiQuestion").value.trim();
         const useOllama = document.getElementById("useOllama").checked;
         if (!question) return;
 
+        openChat();
+
         button.disabled = true;
-        responseBox.textContent = "Thinking…";
+        const { responseDiv, bubble } = appendChatMessage("assistant", "Thinking…");
+        appendChatMessage("user", question);
+        document.getElementById("aiQuestion").value = "";
         const payload = { question, use_ollama: useOllama };
         if (useOllama) payload.provider = "ollama";
         if (selectedId) payload.device_id = selectedId;
@@ -709,23 +1019,8 @@
           });
           const data = await res.json();
           let content = data.answer || "No answer generated.";
-          const aiBubble = document.createElement("div");
-          aiBubble.className = "bubble ai";
-          aiBubble.innerHTML = `
-                <div class="label">Assistant
-                  <button class="close" aria-label="Close">✕</button>
-                </div>
-                <div class="response"></div>
-              `;
 
-          const responseDiv = aiBubble.querySelector(".response");
-          const closeBtn = aiBubble.querySelector(".close");
-
-          closeBtn.addEventListener("click", () => {
-            aiBubble.remove();
-          });
-
-          const thinkMatch = content.match(/<think>([\s\S]*?)<\/think>/i);
+          const thinkMatch = content.match(/<think>[\s\S]*?<\/think>/i);
           if (thinkMatch) {
             const thinkDetails = document.createElement("details");
             thinkDetails.className = "think";
@@ -741,20 +1036,66 @@
           answer.className = "answer";
           answer.innerHTML = content.trim();
           responseDiv.appendChild(answer);
-
-          responseBox.innerHTML = "";
-          responseBox.appendChild(aiBubble);
         } catch (err) {
           console.error(err);
-          responseBox.textContent = "Assistant unavailable.";
+          bubble.querySelector(".label").textContent = "Assistant (error)";
+          responseDiv.textContent = "Assistant unavailable.";
         } finally {
           button.disabled = false;
         }
       }
 
+      function appendChatMessage(role, content) {
+        const history = document.getElementById("chatHistory");
+        if (history.querySelector(".empty-state")) history.innerHTML = "";
+        const wrapper = document.createElement("div");
+        wrapper.className = `chat-message ${role}`;
+        const bubble = document.createElement("div");
+        bubble.className = "bubble";
+        const label = document.createElement("div");
+        label.className = "label";
+        label.textContent = role === "user" ? "You" : "Assistant";
+        if (role === "assistant") {
+          const close = document.createElement("button");
+          close.className = "close";
+          close.textContent = "✕";
+          close.addEventListener("click", () => wrapper.remove());
+          label.appendChild(close);
+        }
+
+        const response = document.createElement("div");
+        response.className = "response";
+        response.innerHTML = content;
+
+        bubble.appendChild(label);
+        bubble.appendChild(response);
+        wrapper.appendChild(bubble);
+        history.appendChild(wrapper);
+        history.scrollTop = history.scrollHeight;
+        return { responseDiv: response, bubble };
+      }
+
+      function openChat() {
+        const panel = document.getElementById("chatPanel");
+        panel.classList.remove("hidden");
+        document.getElementById("aiQuestion").focus();
+      }
+
+      function closeChat() {
+        const panel = document.getElementById("chatPanel");
+        panel.classList.add("hidden");
+      }
+
+      function toggleChat() {
+        const panel = document.getElementById("chatPanel");
+        panel.classList.contains("hidden") ? openChat() : closeChat();
+      }
+
       document
         .getElementById("askButton")
         .addEventListener("click", askAssistant);
+      document.getElementById("chatToggle").addEventListener("click", toggleChat);
+      document.getElementById("chatClose").addEventListener("click", closeChat);
 
       window.addEventListener("load", () => {
         initCharts();

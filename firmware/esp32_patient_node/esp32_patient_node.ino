@@ -1,5 +1,5 @@
 /*
-  Freenove ESP8266 + MAX30105
+  Freenove ESP8266 + MAX30105 + MPU9250 + DHT22
   Serial-only output (no display, no NeoPixel)
   D2 = SDA (GPIO4), D1 = SCL (GPIO5)
   D6 = RED LED (GPIO12), D7 = GREEN LED (GPIO13)
@@ -13,21 +13,28 @@
 #include <time.h>
 #include <string.h>
 #include <math.h>
-#include <Adafruit_Sensor.h>
-#include <Adafruit_MPU6050.h>
+
 #include <DHT.h>
 #include "MAX30105.h"
 #include "heartRate.h"
 
+// ---- MPU9250 LIBRARY ----
+#include "mpu9250.h"
+
+// ---------------- SENSORS & GLOBALS ----------------
 MAX30105 particleSensor;
 long lastIrSample = 0;
 long lastRedSample = 0;
 
-Adafruit_MPU6050 mpu;
+// an MPU9250 object with MPU-9250 at I2C addr 0x68
+// bfs::Mpu9250 imu(&Wire, bfs::Mpu9250::I2C_ADDR_PRIM);
 
-const uint8_t DHT_PIN = 2;   // D4
+// an MPU9250 object with MPU-9250 at I2C addr 0x69
+bfs::Mpu9250 imu(&Wire, bfs::Mpu9250::I2C_ADDR_SEC);
+
+const uint8_t DHT_PIN = 2;  // D4
 const uint8_t DHT_TYPE = DHT22;
-const int MPU_INT_PIN = 16;  // D0 (optional interrupt pin)
+const int MPU_INT_PIN = 16;  // D0 (optional interrupt pin, not strictly needed for basic reads)
 
 // Wi-Fi credentials and backend discovery
 const char *WIFI_SSID = "JarvisX";
@@ -45,9 +52,9 @@ const unsigned long discoveryIntervalMs = 15000;
 unsigned long lastSendMs = 0;
 const unsigned long sendIntervalMs = 2000;
 
-const int D1 = 5;
-const int D2 = 4;
-const int RED_LED_PIN   = 12;  // D6
+const int D1 = 5;              // SCL
+const int D2 = 4;              // SDA
+const int RED_LED_PIN = 12;    // D6
 const int GREEN_LED_PIN = 13;  // D7
 
 DHT dht(DHT_PIN, DHT_TYPE);
@@ -64,6 +71,7 @@ const int smoothingFactor = 20;
 const long MIN_IR_VALUE = 5000;
 bool fingerDetected = false;
 
+// MPU / motion
 bool mpuReady = false;
 float ambientTempC = NAN;
 float ambientHumidity = NAN;
@@ -73,6 +81,7 @@ const unsigned long envReadIntervalMs = 5000;
 bool motionValid = false;
 unsigned long lastMotionReadMs = 0;
 const unsigned long motionReadIntervalMs = 200;
+
 float accelX = 0.0f;
 float accelY = 0.0f;
 float accelZ = 0.0f;
@@ -101,7 +110,7 @@ void setup() {
   Serial.begin(115200);
   delay(300);
   Serial.println();
-  Serial.println("Booting Freenove ESP8266 + MAX30105 (serial-only) ...");
+  Serial.println("Booting Freenove ESP8266 + MAX30105 + MPU9250 (serial-only) ...");
 
   dht.begin();
   Serial.println("DHT22 initialised.");
@@ -115,20 +124,30 @@ void setup() {
   digitalWrite(RED_LED_PIN, LOW);
   digitalWrite(GREEN_LED_PIN, LOW);
 
-  pinMode(MPU_INT_PIN, INPUT_PULLUP);
+  pinMode(MPU_INT_PIN, INPUT_PULLUP);  // optional, not required for polling
 
-  Wire.begin(D2, D1); // SDA, SCL
+  // I2C init with custom pins on ESP8266
+  Wire.begin(D2, D1);  // SDA, SCL
 
-  if (mpu.begin()) {
-    mpuReady = true;
-    mpu.setAccelerometerRange(MPU6050_RANGE_4_G);
-    mpu.setGyroRange(MPU6050_RANGE_500_DEG);
-    mpu.setFilterBandwidth(MPU6050_BAND_21_HZ);
-    Serial.println("MPU6050 initialised.");
+  // --------- MPU9250 INIT ----------
+  Serial.println("Initialising MPU9250 ...");
+
+  imu.Config(&Wire, bfs::Mpu9250::I2C_ADDR_PRIM);
+
+  if (!imu.Begin()) {
+    Serial.println("WARNING: MPU9250 not found or failed init.");
+    mpuReady = false;
   } else {
-    Serial.println("WARNING: MPU6050 not fou  nd. Motion data disabled.");
+    mpuReady = true;
+    imu.ConfigAccelRange(bfs::Mpu9250::ACCEL_RANGE_4G);
+    imu.ConfigGyroRange(bfs::Mpu9250::GYRO_RANGE_500DPS);
+    imu.ConfigDlpfBandwidth(bfs::Mpu9250::DLPF_BANDWIDTH_20HZ);
+    imu.ConfigSrd(19);  // ~50 Hz sample rate
+    Serial.println("MPU9250 initialised.");
   }
 
+
+  // --------- MAX30105 (Pulse Oximeter) INIT ----------
   if (!particleSensor.begin(Wire, I2C_SPEED_FAST)) {
     Serial.println("ERROR: MAX30105 not found. Check wiring and 3.3V power.");
     while (1) {
@@ -138,9 +157,9 @@ void setup() {
   }
 
   // sensible defaults
-  byte ledBrightness = 0x1F;   // 31
+  byte ledBrightness = 0x1F;  // 31
   byte sampleAverage = 8;
-  byte ledMode = 3;            // Red + IR + Green (use 3 to keep compatibility)
+  byte ledMode = 3;  // Red + IR + Green
   int sampleRate = 100;
   int pulseWidth = 411;
   int adcRange = 4096;
@@ -154,275 +173,151 @@ void setup() {
 // ---------------- LOOP ----------------
 void loop() {
   unsigned long now = millis();
+
+  // Read MAX30105
   long irValue = particleSensor.getIR();
   long redValue = particleSensor.getRed();
   float temperatureC = particleSensor.readTemperature();
   lastIrSample = irValue;
   lastRedSample = redValue;
 
+  // --------- ENVIRONMENT (DHT22) ----------
   if (now - lastEnvReadMs >= envReadIntervalMs) {
     lastEnvReadMs = now;
     float newTemp = dht.readTemperature();
     float newHumidity = dht.readHumidity();
     if (!isnan(newTemp)) {
       ambientTempC = newTemp;
-      Serial.print("Ambient Temp(C): ");
-      Serial.println(ambientTempC, 1);
-    }
-    if (!isnan(newHumidity)) {
-      ambientHumidity = newHumidity;
-      Serial.print("Humidity(%): ");
+          Serial.print("Humidity(%): ");
       Serial.println(ambientHumidity, 1);
     }
   }
 
+  // --------- MPU9250 READ ----------  
   if (mpuReady && (now - lastMotionReadMs >= motionReadIntervalMs)) {
     lastMotionReadMs = now;
-    sensors_event_t accelEvent;
-    sensors_event_t gyroEvent;
-    sensors_event_t tempEvent;
-    mpu.getEvent(&accelEvent, &gyroEvent, &tempEvent);
-    accelX = accelEvent.acceleration.x;
-    accelY = accelEvent.acceleration.y;
-    accelZ = accelEvent.acceleration.z;
-    gyroX = gyroEvent.gyro.x;
-    gyroY = gyroEvent.gyro.y;
-    gyroZ = gyroEvent.gyro.z;
-    accelMagnitudeG = sqrtf((accelX * accelX) + (accelY * accelY) + (accelZ * accelZ)) / 9.80665f;
-    motionValid = true;
-    Serial.print("Accel (m/s^2): ");
-    Serial.print(accelX, 2);
-    Serial.print(", ");
-    Serial.print(accelY, 2);
-    Serial.print(", ");
-    Serial.print(accelZ, 2);
-    Serial.print("  |  Gyro (deg/s): ");
-    Serial.print(gyroX, 2);
-    Serial.print(", ");
-    Serial.print(gyroY, 2);
-    Serial.print(", ");
-    Serial.println(gyroZ, 2);
-    Serial.print("Accel Magnitude (g): ");
-    Serial.println(accelMagnitudeG, 2);
+    if (imu.Read()) {
+      motionValid = true;
+      accelX = imu.accel_x_mps2();
+      accelY = imu.accel_y_mps2();
+      accelZ = imu.accel_z_mps2();
+      gyroX  = imu.gyro_x_radps();
+      gyroY  = imu.gyro_y_radps();
+      gyroZ  = imu.gyro_z_radps();
+      accelMagnitudeG = sqrt((accelX * accelX) + (accelY * accelY) + (accelZ * accelZ)) / 9.80665f;
+    }
   }
 
   fallDetected = motionValid &&
                  (accelMagnitudeG > FALL_UPPER_G || accelMagnitudeG < FALL_LOWER_G);
-  if (fallDetected) {
-    Serial.println("Motion alert: fall threshold exceeded.");
-  }
 
   // finger detection
   fingerDetected = (irValue > MIN_IR_VALUE);
 
-  Serial.print("IR=");
-  Serial.print(irValue);
-  Serial.print("  RED=");
-  Serial.print(redValue);
-  Serial.print("  Finger=");
-  Serial.println(fingerDetected ? "YES" : "NO");
-
-  if (fingerDetected) {
-    // BPM detection
-    if (checkForBeat(irValue)) {
-      long delta = millis() - lastBeat;
-      if (delta > 300) {
-        lastBeat = millis();
-        float bpm = 60.0 / (delta / 1000.0);
-        if (bpm > 40 && bpm < 180) {
-          beatsPerMinute = bpm;
-          Serial.print("Detected beat. BPM=");
-          Serial.println(beatsPerMinute);
-        }
-      }
+  // BPM detection
+  if (fingerDetected && checkForBeat(irValue)) {
+    long delta = millis() - lastBeat;
+    if (delta > 300) {
+      lastBeat = millis();
+      float bpm = 60.0 / (delta / 1000.0);
+      if (bpm > 40 && bpm < 180) beatsPerMinute = bpm;
     }
-
-    // SpO2
-    spO2 = calculateSpO2Simple(redValue, irValue);
-    // simple inhale/exhale detection (based on IR moving average)
-    irMovingAverage = (irMovingAverage * (smoothingFactor - 1) + irValue) / smoothingFactor;
-
-    if (irValue < irMovingAverage - 300) {
-      if (!isInhaling) {
-        isInhaling = true;
-        isExhaling = false;
-        Serial.println("Respiration: Inhale");
-        digitalWrite(GREEN_LED_PIN, HIGH);
-        digitalWrite(RED_LED_PIN, LOW);
-      }
-    } else if (irValue > irMovingAverage + 300) {
-      if (!isExhaling) {
-        isExhaling = true;
-        isInhaling = false;
-        Serial.println("Respiration: Exhale");
-        digitalWrite(RED_LED_PIN, HIGH);
-        digitalWrite(GREEN_LED_PIN, LOW);
-      }
-    }
-
-    // periodic status print (BPM, SpO2, Temp)
-    Serial.print("BPM: ");
-    if (beatsPerMinute > 0.0) Serial.println(beatsPerMinute);
-    else Serial.println("N/A");
-
-    Serial.print("SpO2: ");
-    Serial.print(spO2, 1);
-    Serial.println(" %");
-
-    Serial.print("Temp(C): ");
-    Serial.println(temperatureC, 1);
-  } else {
-    // no finger: LEDs off, reset respiration flags
-    digitalWrite(RED_LED_PIN, LOW);
-    digitalWrite(GREEN_LED_PIN, LOW);
-    isInhaling = false;
-    isExhaling = false;
-    Serial.println("No finger detected. Place finger on sensor.");
   }
 
-  Serial.println("-------------------------------");
+  // SpO2
+  spO2 = calculateSpO2Simple(redValue, irValue);
+
+  // respiration
+  irMovingAverage = (irMovingAverage * (smoothingFactor - 1) + irValue) / smoothingFactor;
+  if (irValue < irMovingAverage - 300) {
+    isInhaling = true;
+    isExhaling = false;
+  } else if (irValue > irMovingAverage + 300) {
+    isExhaling = true;
+    isInhaling = false;
+  }
+
   sendVitalsToBackend(temperatureC);
-  delay(700); // adjust loop pace as needed
 }
 
-// ---------------- checkForBeat ----------------
-// Simple derivative-based beat detection used in original sketch
+
+// ----------------------------------------------------------------------------------
+// FUNCTIONS BELOW WERE MISSING — THESE MUST EXIST
+// ----------------------------------------------------------------------------------
+
 boolean checkForBeat(long irValue) {
-  static long prevIrValue = 0;
+  static long prevIr = 0;
   static boolean prevState = false;
-
-  boolean beatDetected = (irValue > prevIrValue + 20) && prevState && (millis() - lastBeat > 300);
-  prevIrValue = irValue;
+  boolean beatDetected = (irValue > prevIr + 20) && prevState;
+  prevIr = irValue;
   prevState = (irValue > MIN_IR_VALUE);
-
   return beatDetected;
 }
 
-// ---------------- calculateSpO2Simple ----------------
 float calculateSpO2Simple(long redValue, long irValue) {
   if (irValue == 0) return 0.0;
   float ratio = (float)redValue / (float)irValue;
-  float spO2 = 110.0 - (25.0 * ratio);
-  return constrain(spO2, 0.0, 100.0);
+  float spo2 = 110.0 - (25.0 * ratio);
+  return constrain(spo2, 0.0, 100.0);
 }
 
 String jsonFloat(float value, uint8_t decimals) {
-  if (isnan(value) || isinf(value)) {
-    return String("null");
-  }
+  if (isnan(value) || isinf(value)) return "null";
   return String(value, decimals);
 }
 
-// ---------------- NETWORK HELPERS ----------------
 void connectWiFi() {
-  if (WiFi.status() == WL_CONNECTED) return;
-
-  Serial.print("Connecting to WiFi: ");
-  Serial.println(WIFI_SSID);
+  Serial.print("Connecting WiFi...");
   WiFi.mode(WIFI_STA);
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-
-  int retries = 0;
-  while (WiFi.status() != WL_CONNECTED && retries < 40) {
+  int retry = 0;
+  while (WiFi.status() != WL_CONNECTED && retry < 40) {
     delay(250);
-    Serial.print(".");
-    retries++;
+    retry++;
   }
   Serial.println();
-
-  if (WiFi.status() == WL_CONNECTED) {
-    Serial.print("WiFi connected. IP address: ");
-    Serial.println(WiFi.localIP());
-  } else {
-    Serial.println("Failed to connect to WiFi. Check credentials.");
-  }
 }
 
 bool discoverBackend() {
-  unsigned long now = millis();
-  if ((backendBaseUrl.length() > 0) && (now - lastDiscoveryAttempt < discoveryIntervalMs)) {
-    return true;
-  }
+  udp.begin(DISCOVERY_PORT);
+  udp.beginPacket(IPAddress(255,255,255,255), DISCOVERY_PORT);
+  udp.write(DISCOVERY_REQUEST);
+  udp.endPacket();
 
-  lastDiscoveryAttempt = now;
-  if (!udp.begin(DISCOVERY_PORT)) {
-    Serial.println("UDP setup for discovery failed.");
-    return false;
-  }
-
-  Serial.println("Broadcasting for backend...");
-  for (int attempt = 0; attempt < 3; attempt++) {
-    udp.beginPacket(IPAddress(255, 255, 255, 255), DISCOVERY_PORT);
-    udp.write(DISCOVERY_REQUEST);
-    udp.endPacket();
-
-    unsigned long startWait = millis();
-    while (millis() - startWait < 1200) {
-      int packetSize = udp.parsePacket();
-      if (packetSize) {
-        String response = udp.readString();
-        response.trim();
-        Serial.print("Discovery response: ");
-        Serial.println(response);
-
-        if (response.startsWith(DISCOVERY_RESPONSE)) {
-          backendBaseUrl = response.substring(strlen(DISCOVERY_RESPONSE));
-          backendBaseUrl.trim();
-          Serial.print("Backend discovered at: ");
-          Serial.println(backendBaseUrl);
-          return true;
-        }
+  unsigned long start = millis();
+  while (millis() - start < 1500) {
+    int pkt = udp.parsePacket();
+    if (pkt) {
+      String res = udp.readString();
+      if (res.startsWith(DISCOVERY_RESPONSE)) {
+        backendBaseUrl = res.substring(strlen(DISCOVERY_RESPONSE));
+        backendBaseUrl.trim();
+        return true;
       }
-      delay(50);
     }
+    delay(20);
   }
-
-  Serial.println("Backend discovery failed. Will retry.");
-  backendBaseUrl = "";
   return false;
 }
 
 String isoTimestamp() {
-  struct tm timeinfo;
-  if (!getLocalTime(&timeinfo, 1000)) {
-    return "1970-01-01T00:00:00Z";
-  }
-  char buffer[30];
-  strftime(buffer, sizeof(buffer), "%Y-%m-%dT%H:%M:%SZ", &timeinfo);
-  return String(buffer);
+  struct tm t;
+  if (!getLocalTime(&t, 1000)) return "1970-01-01T00:00:00Z";
+  char buf[30];
+  strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%SZ", &t);
+  return String(buf);
 }
 
 bool postJson(const String &url, const String &payload) {
-  if (WiFi.status() != WL_CONNECTED) {
-    connectWiFi();
-    if (WiFi.status() != WL_CONNECTED) return false;
-  }
-
+  if (WiFi.status() != WL_CONNECTED) return false;
   HTTPClient http;
   WiFiClient client;
 
-  Serial.print("POST ");
-  Serial.println(url);
   http.begin(client, url);
   http.addHeader("Content-Type", "application/json");
-  int httpCode = http.POST(payload);
-
-  if (httpCode > 0) {
-    Serial.print("Response code: ");
-    Serial.println(httpCode);
-  } else {
-    Serial.print("HTTP POST failed: ");
-    Serial.println(http.errorToString(httpCode));
-  }
-
+  int code = http.POST(payload);
   http.end();
-  return httpCode > 0 && httpCode < 300;
-}
-
-void sendTelemetry(const String &jsonPayload) {
-  if (backendBaseUrl.length() == 0) return;
-  String url = backendBaseUrl + "/device/" + DEVICE_ID + "/telemetry";
-  postJson(url, jsonPayload);
+  return (code > 0 && code < 300);
 }
 
 void sendVitalsToBackend(float temperatureC) {
@@ -430,61 +325,25 @@ void sendVitalsToBackend(float temperatureC) {
   if (now - lastSendMs < sendIntervalMs) return;
   lastSendMs = now;
 
-  if (WiFi.status() != WL_CONNECTED) {
-    connectWiFi();
-  }
-
   if (!discoverBackend()) return;
 
   String url = backendBaseUrl + "/device/" + DEVICE_ID + "/vitals";
-  String payload = "{\"device_id\":\"" + String(DEVICE_ID) + "\",";
-  float hrValue = (fingerDetected && beatsPerMinute > 0.0f) ? beatsPerMinute : NAN;
-  float spo2Value = (fingerDetected && spO2 > 0.0f) ? spO2 : NAN;
-  float tempValue = fingerDetected ? temperatureC : NAN;
 
+  float hr = (fingerDetected ? beatsPerMinute : NAN);
+  float spo = (fingerDetected ? spO2 : NAN);
+  float temp = (fingerDetected ? temperatureC : NAN);
+
+  String payload = "{";
+  payload += "\"device_id\":\"" + String(DEVICE_ID) + "\",";
   payload += "\"patient_hash\":\"" + String(PATIENT_HASH) + "\",";
   payload += "\"timestamp\":\"" + isoTimestamp() + "\",";
   payload += "\"vitals\":{";
-  payload += "\"heart_rate\":" + jsonFloat(hrValue, 1) + ",";
-  payload += "\"spo2\":" + jsonFloat(spo2Value, 1) + ",";
-  payload += "\"temperature\":" + jsonFloat(tempValue, 1) + ",";
-  payload += "\"fall_detected\":";
-  payload += (fallDetected ? "true" : "false");
+  payload += "\"heart_rate\":" + jsonFloat(hr) + ",";
+  payload += "\"spo2\":" + jsonFloat(spo) + ",";
+  payload += "\"temperature\":" + jsonFloat(temp) + ",";
+  payload += "\"fall_detected\":" + String(fallDetected ? "true" : "false");
   payload += "}}";
 
-  bool ok = postJson(url, payload);
-
-  // also emit flexible telemetry (respiration, raw IR) for debugging or expansion
-  String breathState = "steady";
-  if (isInhaling) breathState = "inhale";
-  else if (isExhaling) breathState = "exhale";
-
-  String telemetry = "{\"respiration\":\"" + breathState + "\"";
-  telemetry += ",\"fingerDetected\":";
-  telemetry += (fingerDetected ? "true" : "false");
-  telemetry += ",\"irMovingAverage\":" + String(irMovingAverage);
-  telemetry += ",\"ir\":" + String(lastIrSample);
-  telemetry += ",\"red\":" + String(lastRedSample);
-  telemetry += ",\"fallDetected\":";
-  telemetry += (fallDetected ? "true" : "false");
-  if (!isnan(ambientTempC)) {
-    telemetry += ",\"ambientTemp\":" + jsonFloat(ambientTempC, 1);
-  }
-  if (!isnan(ambientHumidity)) {
-    telemetry += ",\"humidity\":" + jsonFloat(ambientHumidity, 1);
-  }
-  if (motionValid) {
-    telemetry += ",\"accelX\":" + jsonFloat(accelX, 2);
-    telemetry += ",\"accelY\":" + jsonFloat(accelY, 2);
-    telemetry += ",\"accelZ\":" + jsonFloat(accelZ, 2);
-    telemetry += ",\"gyroX\":" + jsonFloat(gyroX, 2);
-    telemetry += ",\"gyroY\":" + jsonFloat(gyroY, 2);
-    telemetry += ",\"gyroZ\":" + jsonFloat(gyroZ, 2);
-    telemetry += ",\"accelMagnitudeG\":" + jsonFloat(accelMagnitudeG, 2);
-  }
-  telemetry += "}";
-
-  if (ok) {
-    sendTelemetry(telemetry);
-  }
+  postJson(url, payload);
 }
+

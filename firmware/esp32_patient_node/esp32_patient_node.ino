@@ -26,11 +26,8 @@ MAX30105 particleSensor;
 long lastIrSample = 0;
 long lastRedSample = 0;
 
-// an MPU9250 object with MPU-9250 at I2C addr 0x68
-// bfs::Mpu9250 imu(&Wire, bfs::Mpu9250::I2C_ADDR_PRIM);
-
-// an MPU9250 object with MPU-9250 at I2C addr 0x69
-bfs::Mpu9250 imu(&Wire, bfs::Mpu9250::I2C_ADDR_SEC);
+// an MPU9250 object, defaulting to primary addr 0x68
+bfs::Mpu9250 imu(&Wire, bfs::Mpu9250::I2C_ADDR_PRIM);
 
 const uint8_t DHT_PIN = 2;  // D4
 const uint8_t DHT_TYPE = DHT22;
@@ -136,8 +133,14 @@ void setup() {
 
   // --------- MPU9250 INIT ----------
   Serial.println("Initialising MPU9250 ...");
+  uint8_t activeMpuAddress = bfs::Mpu9250::I2C_ADDR_PRIM;
+  imu.Config(&Wire, activeMpuAddress);
 
-  imu.Config(&Wire, bfs::Mpu9250::I2C_ADDR_PRIM);
+  if (!imu.Begin()) {
+    Serial.println("WARNING: MPU9250 not found at 0x68. Retrying 0x69...");
+    activeMpuAddress = bfs::Mpu9250::I2C_ADDR_SEC;
+    imu.Config(&Wire, activeMpuAddress);
+  }
 
   if (!imu.Begin()) {
     Serial.println("WARNING: MPU9250 not found or failed init.");
@@ -148,7 +151,8 @@ void setup() {
     imu.ConfigGyroRange(bfs::Mpu9250::GYRO_RANGE_500DPS);
     imu.ConfigDlpfBandwidth(bfs::Mpu9250::DLPF_BANDWIDTH_20HZ);
     imu.ConfigSrd(19);  // ~50 Hz sample rate
-    Serial.println("MPU9250 initialised.");
+    Serial.print("MPU9250 initialised at 0x");
+    Serial.println(activeMpuAddress, HEX);
   }
 
 

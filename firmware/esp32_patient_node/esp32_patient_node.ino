@@ -26,11 +26,8 @@ MAX30105 particleSensor;
 long lastIrSample = 0;
 long lastRedSample = 0;
 
-// an MPU9250 object with MPU-9250 at I2C addr 0x68
-// bfs::Mpu9250 imu(&Wire, bfs::Mpu9250::I2C_ADDR_PRIM);
-
-// an MPU9250 object with MPU-9250 at I2C addr 0x69
-bfs::Mpu9250 imu(&Wire, bfs::Mpu9250::I2C_ADDR_SEC);
+// an MPU9250 object, defaulting to primary addr 0x68
+bfs::Mpu9250 imu(&Wire, bfs::Mpu9250::I2C_ADDR_PRIM);
 
 const uint8_t DHT_PIN = 2;  // D4
 const uint8_t DHT_TYPE = DHT22;
@@ -51,6 +48,9 @@ unsigned long lastDiscoveryAttempt = 0;
 const unsigned long discoveryIntervalMs = 15000;
 unsigned long lastSendMs = 0;
 const unsigned long sendIntervalMs = 2000;
+
+// Toggle between real sensor values and demo placeholders
+const bool USE_DUMMY_DATA = false;
 
 const int D1 = 5;              // SCL
 const int D2 = 4;              // SDA
@@ -91,11 +91,14 @@ float gyroZ = 0.0f;
 float accelMagnitudeG = NAN;
 bool fallDetected = false;
 
+float activityLevel = 0.0f;
+String activityState = "sleeping";
+uint32_t stepsWalked = 0;
+
 const float FALL_LOWER_G = 0.5f;
 const float FALL_UPPER_G = 2.8f;
 
 // ---------------- PROTOTYPES ----------------
-boolean checkForBeat(long irValue);
 float calculateSpO2Simple(long redValue, long irValue);
 String jsonFloat(float value, uint8_t decimals = 2);
 void connectWiFi();
@@ -103,7 +106,6 @@ bool discoverBackend();
 String isoTimestamp();
 bool postJson(const String &url, const String &payload);
 void sendVitalsToBackend(float temperatureC);
-void sendTelemetry(const String &jsonPayload);
 
 // ---------------- SETUP ----------------
 void setup() {
@@ -131,8 +133,14 @@ void setup() {
 
   // --------- MPU9250 INIT ----------
   Serial.println("Initialising MPU9250 ...");
+  uint8_t activeMpuAddress = bfs::Mpu9250::I2C_ADDR_PRIM;
+  imu.Config(&Wire, activeMpuAddress);
 
-  imu.Config(&Wire, bfs::Mpu9250::I2C_ADDR_PRIM);
+  if (!imu.Begin()) {
+    Serial.println("WARNING: MPU9250 not found at 0x68. Retrying 0x69...");
+    activeMpuAddress = bfs::Mpu9250::I2C_ADDR_SEC;
+    imu.Config(&Wire, activeMpuAddress);
+  }
 
   if (!imu.Begin()) {
     Serial.println("WARNING: MPU9250 not found or failed init.");
@@ -143,7 +151,8 @@ void setup() {
     imu.ConfigGyroRange(bfs::Mpu9250::GYRO_RANGE_500DPS);
     imu.ConfigDlpfBandwidth(bfs::Mpu9250::DLPF_BANDWIDTH_20HZ);
     imu.ConfigSrd(19);  // ~50 Hz sample rate
-    Serial.println("MPU9250 initialised.");
+    Serial.print("MPU9250 initialised at 0x");
+    Serial.println(activeMpuAddress, HEX);
   }
 
 
@@ -188,8 +197,9 @@ void loop() {
     float newHumidity = dht.readHumidity();
     if (!isnan(newTemp)) {
       ambientTempC = newTemp;
-          Serial.print("Humidity(%): ");
-      Serial.println(ambientHumidity, 1);
+    }
+    if (!isnan(newHumidity)) {
+      ambientHumidity = newHumidity;
     }
   }
 
@@ -211,16 +221,39 @@ void loop() {
   fallDetected = motionValid &&
                  (accelMagnitudeG > FALL_UPPER_G || accelMagnitudeG < FALL_LOWER_G);
 
+  if (motionValid) {
+    activityLevel = constrain(fabs(accelMagnitudeG - 1.0f) * 0.8f, 0.0f, 1.0f);
+    if (activityLevel > 0.7f) {
+      activityState = "exercising";
+    } else if (activityLevel > 0.4f) {
+      activityState = "walking";
+    } else if (activityLevel > 0.15f) {
+      activityState = "sitting";
+    } else {
+      activityState = "sleeping";
+    }
+
+    // crude step estimate based on sustained motion
+    static unsigned long lastStepUpdate = 0;
+    if (activityLevel > 0.35f && now - lastStepUpdate > 900) {
+      stepsWalked += 2 + (uint32_t)(activityLevel * 5);
+      lastStepUpdate = now;
+    }
+  }
+
   // finger detection
   fingerDetected = (irValue > MIN_IR_VALUE);
 
   // BPM detection
   if (fingerDetected && checkForBeat(irValue)) {
     long delta = millis() - lastBeat;
+    lastBeat = millis();
+
     if (delta > 300) {
-      lastBeat = millis();
-      float bpm = 60.0 / (delta / 1000.0);
-      if (bpm > 40 && bpm < 180) beatsPerMinute = bpm;
+      float bpm = 60.0f / (delta / 1000.0f);
+      if (bpm > 35.0f && bpm < 195.0f) {
+        beatsPerMinute = bpm;
+      }
     }
   }
 
@@ -240,19 +273,6 @@ void loop() {
   sendVitalsToBackend(temperatureC);
 }
 
-
-// ----------------------------------------------------------------------------------
-// FUNCTIONS BELOW WERE MISSING — THESE MUST EXIST
-// ----------------------------------------------------------------------------------
-
-boolean checkForBeat(long irValue) {
-  static long prevIr = 0;
-  static boolean prevState = false;
-  boolean beatDetected = (irValue > prevIr + 20) && prevState;
-  prevIr = irValue;
-  prevState = (irValue > MIN_IR_VALUE);
-  return beatDetected;
-}
 
 float calculateSpO2Simple(long redValue, long irValue) {
   if (irValue == 0) return 0.0;
@@ -332,6 +352,50 @@ void sendVitalsToBackend(float temperatureC) {
   float hr = (fingerDetected ? beatsPerMinute : NAN);
   float spo = (fingerDetected ? spO2 : NAN);
   float temp = (fingerDetected ? temperatureC : NAN);
+  float ambientTemp = ambientTempC;
+  float humidity = ambientHumidity;
+
+  float activity = activityLevel;
+  String activityLabel = activityState;
+  uint32_t steps = stepsWalked;
+
+  static float lastHr = 78.0f;
+  static float lastSpo = 98.0f;
+  static float lastTemp = 36.6f;
+  static float lastAmbient = 24.0f;
+  static float lastHumidity = 45.0f;
+  static float lastActivity = 0.05f;
+  static String lastActivityLabel = "sleeping";
+  static uint32_t lastSteps = 0;
+
+  if (USE_DUMMY_DATA) {
+    hr = 78.0f;
+    spo = 98.0f;
+    temp = 36.6f;
+    ambientTemp = 24.0f;
+    humidity = 45.0f;
+    activity = 0.32f;
+    activityLabel = "walking";
+    steps = 2300;
+  } else {
+    if (!isnan(hr)) lastHr = hr;
+    if (!isnan(spo)) lastSpo = spo;
+    if (!isnan(temp)) lastTemp = temp;
+    if (!isnan(ambientTemp)) lastAmbient = ambientTemp;
+    if (!isnan(humidity)) lastHumidity = humidity;
+    if (!isnan(activity)) lastActivity = activity;
+    lastActivityLabel = activityLabel;
+    lastSteps = steps;
+
+    hr = lastHr;
+    spo = lastSpo;
+    temp = lastTemp;
+    ambientTemp = lastAmbient;
+    humidity = lastHumidity;
+    activity = lastActivity;
+    activityLabel = lastActivityLabel;
+    steps = lastSteps;
+  }
 
   String payload = "{";
   payload += "\"device_id\":\"" + String(DEVICE_ID) + "\",";
@@ -341,6 +405,11 @@ void sendVitalsToBackend(float temperatureC) {
   payload += "\"heart_rate\":" + jsonFloat(hr) + ",";
   payload += "\"spo2\":" + jsonFloat(spo) + ",";
   payload += "\"temperature\":" + jsonFloat(temp) + ",";
+  payload += "\"ambient_temperature\":" + jsonFloat(ambientTemp) + ",";
+  payload += "\"humidity\":" + jsonFloat(humidity) + ",";
+  payload += "\"activity_level\":" + jsonFloat(activity, 3) + ",";
+  payload += "\"activity_state\":\"" + activityLabel + "\",";
+  payload += "\"steps_walked\":" + String(steps) + ",";
   payload += "\"fall_detected\":" + String(fallDetected ? "true" : "false");
   payload += "}}";
 

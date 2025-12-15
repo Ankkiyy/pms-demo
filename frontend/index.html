@@ -367,6 +367,30 @@
         box-shadow: none;
       }
 
+      .chip.subtle {
+        background: rgba(148, 163, 184, 0.08);
+        color: #cbd5e1;
+        border: 1px dashed #1f2937;
+      }
+
+      .chip.danger {
+        background: rgba(248, 113, 113, 0.2);
+        color: #fecdd3;
+        border: 1px solid rgba(248, 113, 113, 0.35);
+      }
+
+      .hotkey-hint {
+        display: grid;
+        gap: 6px;
+        margin-top: 10px;
+        font-size: 13px;
+        color: #cbd5e1;
+      }
+
+      .hotkey-hint strong {
+        color: #e2e8f0;
+      }
+
       .assistant-response {
         margin-top: 10px;
         padding: 10px;
@@ -484,6 +508,18 @@
           <div class="chip" id="patientStatus">Waiting for data…</div>
         </div>
 
+        <div class="hotkey-hint">
+          <div class="chip subtle" id="connectionStatus">Device not connected</div>
+          <div>
+            <strong>Keyboard controls (live only):</strong>
+            press <kbd>F</kbd> to inject a fall alert, <kbd>W</kbd> for walking,
+            <kbd>S</kbd> for sleeping, and <kbd>B</kbd> for sitting on the
+            selected patient. Keys only respond once a real heart-rate feed is
+            detected.
+          </div>
+          <div class="chip subtle" id="hotkeyStatus">Shortcuts idle until vitals stream in.</div>
+        </div>
+
         <div id="detailMetrics" class="vital-grid" style="margin-bottom: 12px">
           <div>HR: —</div>
           <div>SpO₂: —</div>
@@ -594,6 +630,45 @@
         { max: 1, label: "exercising" },
       ];
 
+      const HEARTBEAT_STALE_MS = 15000;
+
+      function isHeartRateDetected(vitals) {
+        return Number.isFinite(vitals?.heart_rate) && vitals.heart_rate > 0;
+      }
+
+      function isDeviceConnected(patient) {
+        if (!patient || !patient.vitals) return false;
+        const lastUpdate = patient.updated || new Date(patient.timestamp).getTime();
+        const fresh = Date.now() - lastUpdate < HEARTBEAT_STALE_MS;
+        return isHeartRateDetected(patient.vitals) && fresh;
+      }
+
+      function updateConnectionMessage(connected) {
+        const chip = document.getElementById("connectionStatus");
+        if (!chip) return;
+        chip.textContent = connected
+          ? "Device connected · live vitals streaming"
+          : "Device not connected · vitals pinned to zero";
+        chip.classList.toggle("danger", !connected);
+        chip.classList.toggle("subtle", connected);
+      }
+
+      function updateHotkeyStatus(text, isError = false) {
+        const chip = document.getElementById("hotkeyStatus");
+        if (!chip) return;
+        chip.textContent = text;
+        chip.classList.toggle("danger", isError);
+        chip.classList.toggle("subtle", !isError);
+      }
+
+      function resetCharts() {
+        Object.values(charts || {}).forEach((c) => {
+          c.data.labels = [];
+          c.data.datasets[0].data = [];
+          c.update();
+        });
+      }
+
       function initCharts() {
         const options = (color) => ({
           type: "line",
@@ -698,6 +773,56 @@
         }
       }
 
+      function buildSyntheticMessage(patient, overrides = {}) {
+        const now = new Date();
+        return {
+          ...patient,
+          timestamp: now.toISOString(),
+          updated: now.getTime(),
+          vitals: {
+            ...patient.vitals,
+            ...overrides,
+          },
+        };
+      }
+
+      function handleShortcut(event) {
+        const key = event.key.toLowerCase();
+        if (!["f", "w", "s", "b"].includes(key)) return;
+
+        const active = document.activeElement;
+        if (active && ["INPUT", "TEXTAREA"].includes(active.tagName)) return;
+        if (!selectedId || !patients.has(selectedId)) return;
+
+        const patient = patients.get(selectedId);
+        const connected = isDeviceConnected(patient);
+        if (!connected) {
+          updateHotkeyStatus("Shortcuts paused until heart rate is detected.", true);
+          return;
+        }
+
+        let overrides = null;
+        if (key === "f") {
+          overrides = { fall_detected: true };
+          updateHotkeyStatus("Fall injected into the live feed.");
+        }
+        if (key === "w") {
+          overrides = { activity_state: "walking", activity_level: 0.48, fall_detected: false };
+          updateHotkeyStatus("Marked as walking for the current patient.");
+        }
+        if (key === "s") {
+          overrides = { activity_state: "sleeping", activity_level: 0.06, fall_detected: false };
+          updateHotkeyStatus("Marked as sleeping; sensors show low motion.");
+        }
+        if (key === "b") {
+          overrides = { activity_state: "sitting", activity_level: 0.18, fall_detected: false };
+          updateHotkeyStatus("Marked as sitting / resting.");
+        }
+
+        if (!overrides) return;
+        processMessage(buildSyntheticMessage(patient, overrides));
+      }
+
       function setSelected(deviceId) {
         selectedId = deviceId;
         renderDetail();
@@ -727,6 +852,7 @@
         [...patients.values()]
           .sort((a, b) => b.updated - a.updated)
           .forEach((patient) => {
+            const connected = isDeviceConnected(patient);
             const card = document.createElement("div");
             card.className =
               "patient-card" +
@@ -734,22 +860,35 @@
             card.onclick = () => setSelected(patient.device_id);
 
             const alerting = patient.flags.length > 0;
-            const activityInfo = formatActivity(patient.vitals);
+            const vitals = connected
+              ? patient.vitals
+              : {
+                  ...patient.vitals,
+                  heart_rate: 0,
+                  spo2: 0,
+                  temperature: 0,
+                  ambient_temperature: 0,
+                  humidity: 0,
+                  activity_level: 0,
+                  steps_walked: 0,
+                  activity_state: patient.vitals.activity_state || "offline",
+                };
+            const activityInfo = formatActivity(vitals);
             card.innerHTML = `
               <div class="patient-header">
                 <div class="patient-id">${patient.device_id}</div>
                 <div class="status-pill ${
-                  alerting ? "status-alert" : "status-ok"
-                }">${alerting ? "Attention" : "Stable"}</div>
+                  !connected ? "status-alert" : alerting ? "status-alert" : "status-ok"
+                }">${!connected ? "Disconnected" : alerting ? "Attention" : "Stable"}</div>
               </div>
               <div class="vital-grid">
-                <div>HR ${patient.vitals.heart_rate.toFixed(0)}</div>
-                <div>SpO₂ ${patient.vitals.spo2.toFixed(0)}%</div>
-                <div>Temp ${patient.vitals.temperature.toFixed(1)}°C</div>
-                <div>Room ${patient.vitals.ambient_temperature.toFixed(1)}°C</div>
-                <div>Hum ${patient.vitals.humidity.toFixed(0)}%</div>
+                <div>HR ${vitals.heart_rate.toFixed(0)}</div>
+                <div>SpO₂ ${vitals.spo2.toFixed(0)}%</div>
+                <div>Temp ${vitals.temperature.toFixed(1)}°C</div>
+                <div>Room ${vitals.ambient_temperature.toFixed(1)}°C</div>
+                <div>Hum ${vitals.humidity.toFixed(0)}%</div>
                 <div>Act ${activityInfo.label}</div>
-                <div>Steps ${patient.vitals.steps_walked.toLocaleString()}</div>
+                <div>Steps ${vitals.steps_walked.toLocaleString()}</div>
               </div>
               <canvas class="mini-chart" id="mini-${
                 patient.device_id
@@ -813,82 +952,109 @@
           title.textContent = "Select a patient";
           hash.textContent = "—";
           updated.textContent = "—";
-          status.textContent = "Waiting for data…";
+          status.textContent = "Device not connected";
           metrics.innerHTML =
-            "<div>HR: —</div><div>SpO₂: —</div><div>Body Temp: —</div><div>Activity: —</div>";
+            "<div>HR: 0 bpm</div><div>SpO₂: 0%</div><div>Body Temp: 0°C</div><div>Activity: —</div><div>Steps: 0</div>";
           environment.innerHTML = `
             <div class="metric-card">
               <div class="metric-label">Room Temp</div>
-              <div class="metric-value">—</div>
+              <div class="metric-value">0°C</div>
               <div class="metric-sub">Monitoring ambient comfort</div>
             </div>
             <div class="metric-card">
               <div class="metric-label">Humidity</div>
-              <div class="metric-value">—</div>
-              <div class="metric-sub">—</div>
+              <div class="metric-value">0%</div>
+              <div class="metric-sub">No sensor feed</div>
             </div>
             <div class="metric-card">
               <div class="metric-label">Activity</div>
-              <div class="metric-value">—</div>
+              <div class="metric-value">Offline</div>
               <div class="metric-sub">Accelerometer feed</div>
             </div>
             <div class="metric-card">
               <div class="metric-label">Live activity</div>
-              <div class="metric-value">—</div>
+              <div class="metric-value">Offline</div>
               <div class="metric-sub">Sitting, sleeping, walking, exercising</div>
             </div>`;
-          Object.values(charts || {}).forEach((c) => {
-            c.data.labels = [];
-            c.data.datasets[0].data = [];
-            c.update();
-          });
+          updateConnectionMessage(false);
+          updateHotkeyStatus("Shortcuts idle until a device connects.", true);
+          resetCharts();
           return;
         }
 
         const patient = patients.get(selectedId);
+        const connected = isDeviceConnected(patient);
+        const vitals = connected
+          ? patient.vitals
+          : {
+              ...patient.vitals,
+              heart_rate: 0,
+              spo2: 0,
+              temperature: 0,
+              ambient_temperature: 0,
+              humidity: 0,
+              activity_level: 0,
+              steps_walked: 0,
+              fall_detected: false,
+              activity_state: patient.vitals.activity_state || "offline",
+            };
         title.textContent = `Patient ${patient.device_id}`;
         hash.textContent = `Hash: ${patient.patient_hash.slice(0, 12)}…`;
         updated.textContent = `Updated ${formatTime(patient.timestamp)}`;
-        status.textContent = patient.flags.length
-          ? `Alerts: ${patient.flags.join(", ")}`
-          : "Stable";
-        status.style.color = patient.flags.length ? "#0b1020" : "#0b1020";
-        status.style.background = patient.flags.length
-          ? "rgba(248, 113, 113, 0.95)"
-          : "rgba(74, 222, 128, 0.9)";
+        if (!connected) {
+          status.textContent = "Device not connected";
+          status.style.color = "#0b1020";
+          status.style.background = "rgba(248, 113, 113, 0.95)";
+        } else {
+          status.textContent = patient.flags.length
+            ? `Alerts: ${patient.flags.join(", ")}`
+            : "Stable";
+          status.style.color = "#0b1020";
+          status.style.background = patient.flags.length
+            ? "rgba(248, 113, 113, 0.95)"
+            : "rgba(74, 222, 128, 0.9)";
+        }
 
-        const activityInfo = formatActivity(patient.vitals);
+        updateConnectionMessage(connected);
+        updateHotkeyStatus(
+          connected
+            ? "Shortcuts armed. Use F/W/S/B while monitoring live vitals."
+            : "Shortcuts paused until heart rate is detected.",
+          !connected
+        );
+
+        const activityInfo = formatActivity(vitals);
 
         metrics.innerHTML = `
-          <div>HR: ${patient.vitals.heart_rate.toFixed(0)} bpm</div>
-          <div>SpO₂: ${patient.vitals.spo2.toFixed(0)}%</div>
-          <div>Body Temp: ${patient.vitals.temperature.toFixed(1)}°C</div>
+          <div>HR: ${vitals.heart_rate.toFixed(0)} bpm</div>
+          <div>SpO₂: ${vitals.spo2.toFixed(0)}%</div>
+          <div>Body Temp: ${vitals.temperature.toFixed(1)}°C</div>
           <div>Activity: ${activityInfo.label} (${activityInfo.score})</div>
-          <div>Steps: ${patient.vitals.steps_walked.toLocaleString()}</div>
+          <div>Steps: ${vitals.steps_walked.toLocaleString()}</div>
         `;
 
         environment.innerHTML = `
           <div class="metric-card">
             <div class="metric-label">Room Temp</div>
-            <div class="metric-value">${patient.vitals.ambient_temperature.toFixed(1)}°C</div>
-            <div class="metric-sub">Comfort ${patient.vitals.ambient_temperature < 21 ? "cool" : patient.vitals.ambient_temperature > 27 ? "warm" : "ideal"}</div>
+            <div class="metric-value">${vitals.ambient_temperature.toFixed(1)}°C</div>
+            <div class="metric-sub">Comfort ${vitals.ambient_temperature < 21 ? "cool" : vitals.ambient_temperature > 27 ? "warm" : "ideal"}</div>
           </div>
           <div class="metric-card">
             <div class="metric-label">Humidity</div>
-            <div class="metric-value">${patient.vitals.humidity.toFixed(0)}%</div>
-            <div class="meter"><div style="width: ${Math.min(100, Math.max(0, patient.vitals.humidity))}%;"></div></div>
-            <div class="metric-sub">${patient.vitals.humidity > 60 ? "High humidity nearby" : patient.vitals.humidity < 35 ? "Dry air" : "Comfort range"}</div>
+            <div class="metric-value">${vitals.humidity.toFixed(0)}%</div>
+            <div class="meter"><div style="width: ${Math.min(100, Math.max(0, vitals.humidity))}%;"></div></div>
+            <div class="metric-sub">${vitals.humidity > 60 ? "High humidity nearby" : vitals.humidity < 35 ? "Dry air" : "Comfort range"}</div>
           </div>
           <div class="metric-card">
             <div class="metric-label">Activity</div>
             <div class="metric-value">${activityInfo.label}</div>
-            <div class="meter"><div style="width: ${patient.vitals.activity_level * 100}%; background: linear-gradient(90deg, #34d399, #fb7185);"></div></div>
-            <div class="metric-sub">${activityInfo.score} score via accelerometer</div>
+            <div class="meter"><div style="width: ${vitals.activity_level * 100}%; background: linear-gradient(90deg, #34d399, #fb7185);"></div></div>
+            <div class="metric-sub">${connected ? `${activityInfo.score} score via accelerometer` : "Awaiting motion data"}</div>
           </div>
           <div class="metric-card">
             <div class="metric-label">Steps walked</div>
-            <div class="metric-value">${patient.vitals.steps_walked.toLocaleString()}</div>
-            <div class="metric-sub">Total today from accelerometer</div>
+            <div class="metric-value">${vitals.steps_walked.toLocaleString()}</div>
+            <div class="metric-sub">${connected ? "Total today from accelerometer" : "No pedometer link"}</div>
           </div>
           <div class="metric-card">
             <div class="metric-label">Live activity</div>
@@ -905,7 +1071,7 @@
           </div>
         `;
 
-        if (charts) {
+        if (charts && connected) {
           charts.hr.data.labels = patient.history.labels;
           charts.hr.data.datasets[0].data = patient.history.heart;
           charts.hr.update();
@@ -933,6 +1099,8 @@
           charts.steps.data.labels = patient.history.labels;
           charts.steps.data.datasets[0].data = patient.history.steps;
           charts.steps.update();
+        } else {
+          resetCharts();
         }
       }
 
@@ -1096,6 +1264,7 @@
         .addEventListener("click", askAssistant);
       document.getElementById("chatToggle").addEventListener("click", toggleChat);
       document.getElementById("chatClose").addEventListener("click", closeChat);
+      window.addEventListener("keydown", handleShortcut);
 
       window.addEventListener("load", () => {
         initCharts();
